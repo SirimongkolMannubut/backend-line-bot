@@ -197,33 +197,53 @@ export default function PDFCreatorPage() {
 
   // Crop Box Editor Dragging Logic (Touch & Mouse friendly)
   const imageContainerRef = useRef<HTMLDivElement>(null)
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const dragStartRef = useRef<{
+    startX: number
+    startY: number
+    cropX: number
+    cropY: number
+    cropW: number
+    cropH: number
+  } | null>(null)
   const [activeHandle, setActiveHandle] = useState<string | null>(null) // 'tl', 'tr', 'bl', 'br', 't', 'b', 'l', 'r', 'move'
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, handle: string) => {
     e.stopPropagation()
     e.preventDefault()
     setActiveHandle(handle)
-    setDragStart({ x: e.clientX, y: e.clientY })
+    
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      cropX: editorCrop.x,
+      cropY: editorCrop.y,
+      cropW: editorCrop.w,
+      cropH: editorCrop.h,
+    }
+
     if (e.currentTarget.setPointerCapture) {
       e.currentTarget.setPointerCapture(e.pointerId)
     }
   }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragStart || !activeHandle || !imageContainerRef.current) return
+    if (!activeHandle || !dragStartRef.current || !imageContainerRef.current) return
     e.preventDefault()
 
+    const start = dragStartRef.current
     const container = imageContainerRef.current.getBoundingClientRect()
-    const dx = ((e.clientX - dragStart.x) / container.width) * 100
-    const dy = ((e.clientY - dragStart.y) / container.height) * 100
+    const dx = ((e.clientX - start.startX) / container.width) * 100
+    const dy = ((e.clientY - start.startY) / container.height) * 100
 
-    setEditorCrop((prev) => {
-      let { x, y, w, h } = prev
+    setEditorCrop(() => {
+      let x = start.cropX
+      let y = start.cropY
+      let w = start.cropW
+      let h = start.cropH
 
       if (activeHandle === 'move') {
-        x = Math.max(0, Math.min(100 - w, x + dx))
-        y = Math.max(0, Math.min(100 - h, y + dy))
+        x = Math.max(0, Math.min(100 - w, start.cropX + dx))
+        y = Math.max(0, Math.min(100 - h, start.cropY + dy))
         return { x, y, w, h }
       }
 
@@ -239,58 +259,58 @@ export default function PDFCreatorPage() {
       if (!isLocked) {
         // --- Free Mode: Drag 8 handles independently ---
         if (activeHandle === 'tl') {
-          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
-          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
-          w = w - (newX - x)
-          h = h - (newY - y)
+          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
+          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
+          w = start.cropW - (newX - start.cropX)
+          h = start.cropH - (newY - start.cropY)
           x = newX
           y = newY
         } else if (activeHandle === 'tr') {
-          w = Math.max(10, Math.min(100 - x, w + dx))
-          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
-          h = h - (newY - y)
+          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
+          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
+          h = start.cropH - (newY - start.cropY)
           y = newY
         } else if (activeHandle === 'bl') {
-          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
-          w = w - (newX - x)
+          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
+          w = start.cropW - (newX - start.cropX)
           x = newX
-          h = Math.max(10, Math.min(100 - y, h + dy))
+          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
         } else if (activeHandle === 'br') {
-          w = Math.max(10, Math.min(100 - x, w + dx))
-          h = Math.max(10, Math.min(100 - y, h + dy))
+          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
+          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
         } else if (activeHandle === 't') {
-          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
-          h = h - (newY - y)
+          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
+          h = start.cropH - (newY - start.cropY)
           y = newY
         } else if (activeHandle === 'b') {
-          h = Math.max(10, Math.min(100 - y, h + dy))
+          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
         } else if (activeHandle === 'l') {
-          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
-          w = w - (newX - x)
+          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
+          w = start.cropW - (newX - start.cropX)
           x = newX
         } else if (activeHandle === 'r') {
-          w = Math.max(10, Math.min(100 - x, w + dx))
+          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
         }
       } else {
         // --- Locked Aspect Ratio Mode: Scale proportionally ---
         if (activeHandle === 'br' || activeHandle === 'r' || activeHandle === 'b') {
-          let newW = w + dx
+          let newW = start.cropW + dx
           let newH = newW / targetRatio
           
-          if (x + newW > 100) {
-            newW = 100 - x
+          if (start.cropX + newW > 100) {
+            newW = 100 - start.cropX
             newH = newW / targetRatio
           }
-          if (y + newH > 100) {
-            newH = 100 - y
+          if (start.cropY + newH > 100) {
+            newH = 100 - start.cropY
             newW = newH * targetRatio
           }
           w = Math.max(10, newW)
           h = Math.max(10, newH)
         } else if (activeHandle === 'tl' || activeHandle === 't' || activeHandle === 'l') {
-          const fixedX2 = x + w
-          const fixedY2 = y + h
-          let newW = w - dx
+          const fixedX2 = start.cropX + start.cropW
+          const fixedY2 = start.cropY + start.cropH
+          let newW = start.cropW - dx
           let newH = newW / targetRatio
           
           let newX = fixedX2 - newW
@@ -314,14 +334,14 @@ export default function PDFCreatorPage() {
           w = Math.max(10, newW)
           h = Math.max(10, newH)
         } else if (activeHandle === 'tr') {
-          const fixedX1 = x
-          const fixedY2 = y + h
-          let newW = w + dx
+          const fixedX1 = start.cropX
+          const fixedY2 = start.cropY + start.cropH
+          let newW = start.cropW + dx
           let newH = newW / targetRatio
           
           let newY = fixedY2 - newH
-          if (x + newW > 100) {
-            newW = 100 - x
+          if (start.cropX + newW > 100) {
+            newW = 100 - start.cropX
             newH = newW / targetRatio
             newY = fixedY2 - newH
           }
@@ -335,9 +355,9 @@ export default function PDFCreatorPage() {
           w = Math.max(10, newW)
           h = Math.max(10, newH)
         } else if (activeHandle === 'bl') {
-          const fixedX2 = x + w
-          const fixedY1 = y
-          let newW = w - dx
+          const fixedX2 = start.cropX + start.cropW
+          const fixedY1 = start.cropY
+          let newW = start.cropW - dx
           let newH = newW / targetRatio
           
           let newX = fixedX2 - newW
@@ -360,13 +380,11 @@ export default function PDFCreatorPage() {
 
       return { x, y, w, h }
     })
-
-    setDragStart({ x: e.clientX, y: e.clientY })
   }
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     setActiveHandle(null)
-    setDragStart(null)
+    dragStartRef.current = null
     if (e.currentTarget.releasePointerCapture) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
