@@ -17,12 +17,14 @@ import {
   Sun,
   Moon,
   Sparkles,
+  FileImage,
 } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/transactions', label: 'Ledger', icon: Receipt },
   { href: '/dashboard/slips', label: 'OCR Slips', icon: FileText },
+  { href: '/dashboard/pdf-creator', label: 'PDF Creator', icon: FileImage },
   { href: '/dashboard/calendar', label: 'Calendar', icon: Calendar },
   { href: '/dashboard/profile', label: 'Profile', icon: User },
 ]
