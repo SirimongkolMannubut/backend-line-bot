@@ -1,67 +1,101 @@
 'use client'
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { 
-  Upload, 
-  FileText, 
-  Trash2, 
-  RotateCw, 
-  Crop, 
-  ArrowUp, 
-  ArrowDown, 
-  Download, 
-  Plus, 
-  Check, 
-  X, 
+import {
+  Upload,
+  FileText,
+  Trash2,
+  RotateCw,
+  Crop,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Plus,
+  Check,
+  X,
   Info,
-  Maximize2
+  Maximize2,
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ImageItem {
   id: string
   name: string
-  src: string       // original base64
-  editedSrc: string // cropped / rotated base64
-  rotation: number  // 0, 90, 180, 270
-  cropData?: CropBox
+  src: string        // original base64
+  editedSrc: string  // after crop/rotate
+  rotation: number   // 0,90,180,270 — last applied rotation
 }
 
-/** All values are 0-100 percentages relative to the displayed image bounds */
 interface CropBox {
-  x: number
+  x: number  // % 0-100
   y: number
   w: number
   h: number
 }
 
 type RatioMode = 'free' | '1:1' | 'a4' | '4:3' | '16:9'
-type ResizeHandle = 'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w'
+type Handle = 'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w'
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v))
+function clamp(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v))
 }
 
-function getTargetRatio(mode: RatioMode, imgW: number, imgH: number, rotation: number): number {
-  // For A4 we need to know if the effective image is landscape or portrait
-  const is90or270 = rotation === 90 || rotation === 270
-  const effectiveW = is90or270 ? imgH : imgW
-  const effectiveH = is90or270 ? imgW : imgH
+/** Render src image rotated by `deg` onto a new canvas, return dataURL */
+function renderRotatedCanvas(src: string, deg: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const is90or270 = deg === 90 || deg === 270
+      const cw = is90or270 ? img.naturalHeight : img.naturalWidth
+      const ch = is90or270 ? img.naturalWidth : img.naturalHeight
+      const canvas = document.createElement('canvas')
+      canvas.width = cw
+      canvas.height = ch
+      const ctx = canvas.getContext('2d')!
+      ctx.translate(cw / 2, ch / 2)
+      ctx.rotate((deg * Math.PI) / 180)
+      ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2)
+      resolve(canvas.toDataURL('image/jpeg', 0.95))
+    }
+    img.onerror = reject
+    img.src = src
+  })
+}
 
+/** Crop a dataURL by cropBox percentages → new dataURL */
+function cropCanvas(src: string, box: CropBox): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const sx = (box.x / 100) * img.naturalWidth
+      const sy = (box.y / 100) * img.naturalHeight
+      const sw = (box.w / 100) * img.naturalWidth
+      const sh = (box.h / 100) * img.naturalHeight
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, sw)
+      canvas.height = Math.max(1, sh)
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+      resolve(canvas.toDataURL('image/jpeg', 0.92))
+    }
+    img.onerror = reject
+    img.src = src
+  })
+}
+
+function getRatioValue(mode: RatioMode, imgW: number, imgH: number): number {
   if (mode === '1:1') return 1
   if (mode === '4:3') return 4 / 3
   if (mode === '16:9') return 16 / 9
-  if (mode === 'a4') {
-    return effectiveW > effectiveH ? 297 / 210 : 210 / 297
-  }
+  if (mode === 'a4') return imgW > imgH ? 297 / 210 : 210 / 297
   return -1 // free
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PdfCreatorPage() {
   const [images, setImages] = useState<ImageItem[]>([])
@@ -71,27 +105,31 @@ export default function PdfCreatorPage() {
   const [generating, setGenerating] = useState(false)
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
 
-  // ── Editor Modal States ───────────────────────────────────────────────────
+  // ── Editor states ─────────────────────────────────────────────────────────
   const [editingItem, setEditingItem] = useState<ImageItem | null>(null)
+  /** Pre-rendered working image (already rotated) displayed in the editor */
+  const [workingSrc, setWorkingSrc] = useState<string>('')
+  /** Current total rotation accumulated while editor is open */
+  const [editorRotation, setEditorRotation] = useState(0)
   const [cropBox, setCropBox] = useState<CropBox>({ x: 10, y: 10, w: 80, h: 80 })
-  const [cropRotation, setCropRotation] = useState(0)
-  const [cropRatioMode, setCropRatioMode] = useState<RatioMode>('free')
+  const [ratioMode, setRatioMode] = useState<RatioMode>('free')
+  const [editorLoading, setEditorLoading] = useState(false)
 
-  // Refs for crop interaction
-  const cropOverlayRef = useRef<HTMLDivElement | null>(null)  // the overlay that receives coordinates
-  const editorImgRef = useRef<HTMLImageElement | null>(null)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
+  const workingImgRef = useRef<HTMLImageElement | null>(null)
 
-  const interactionRef = useRef<{
+  // Interaction state (not in React state to avoid re-renders mid-drag)
+  const interaction = useRef<{
     type: 'drag' | 'resize'
-    handle: ResizeHandle | null
-    startClientX: number
-    startClientY: number
+    handle: Handle | null
+    startX: number
+    startY: number
     startBox: CropBox
   } | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // ── File Handling ─────────────────────────────────────────────────────────
+  // ── File handling ─────────────────────────────────────────────────────────
 
   const handleFiles = (files: FileList | null) => {
     if (!files) return
@@ -100,18 +138,17 @@ export default function PdfCreatorPage() {
       const reader = new FileReader()
       reader.onload = (e) => {
         const result = e.target?.result as string
-        if (result) {
-          setImages((prev) => [
-            ...prev,
-            {
-              id: Math.random().toString(36).substring(2, 9),
-              name: file.name,
-              src: result,
-              editedSrc: result,
-              rotation: 0
-            }
-          ])
-        }
+        if (!result) return
+        setImages((prev) => [
+          ...prev,
+          {
+            id: Math.random().toString(36).substring(2, 9),
+            name: file.name,
+            src: result,
+            editedSrc: result,
+            rotation: 0,
+          },
+        ])
       }
       reader.readAsDataURL(file)
     })
@@ -122,126 +159,124 @@ export default function PdfCreatorPage() {
     e.target.value = ''
   }
 
-  // ── Delete & Reorder ──────────────────────────────────────────────────────
+  // ── Reorder ───────────────────────────────────────────────────────────────
 
-  const handleDelete = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id))
+  const handleDelete = (id: string) => setImages((p) => p.filter((i) => i.id !== id))
+
+  const moveItem = (index: number, dir: 'up' | 'down') => {
+    const t = dir === 'up' ? index - 1 : index + 1
+    if (t < 0 || t >= images.length) return
+    const a = [...images]
+    ;[a[index], a[t]] = [a[t], a[index]]
+    setImages(a)
   }
 
-  const moveItem = (index: number, direction: 'up' | 'down') => {
-    if (direction === 'up' && index === 0) return
-    if (direction === 'down' && index === images.length - 1) return
-    const targetIndex = direction === 'up' ? index - 1 : index + 1
-    const updated = [...images]
-    const temp = updated[index]
-    updated[index] = updated[targetIndex]
-    updated[targetIndex] = temp
-    setImages(updated)
-  }
-
-  const handleDragStart = (index: number) => setDraggedIndex(index)
+  const handleDragStart = (i: number) => setDraggedIndex(i)
   const handleDragOver = (e: React.DragEvent) => e.preventDefault()
-  const handleDrop = (index: number) => {
-    if (draggedIndex === null || draggedIndex === index) return
-    const updated = [...images]
-    const item = updated.splice(draggedIndex, 1)[0]
-    updated.splice(index, 0, item)
-    setImages(updated)
+  const handleDrop = (i: number) => {
+    if (draggedIndex === null || draggedIndex === i) return
+    const a = [...images]
+    const [item] = a.splice(draggedIndex, 1)
+    a.splice(i, 0, item)
+    setImages(a)
     setDraggedIndex(null)
   }
 
-  // ── Editor Opening ────────────────────────────────────────────────────────
-
-  const openEditor = (item: ImageItem) => {
+  // ── Open editor ───────────────────────────────────────────────────────────
+  /**
+   * KEY ARCHITECTURE:
+   * We pre-render the image+rotation into a canvas (workingSrc) BEFORE showing
+   * the editor. The editor only sees a normal un-rotated image. Crop box % maps
+   * directly to the displayed image pixels — no CSS transform math needed.
+   */
+  const openEditor = async (item: ImageItem) => {
+    setEditorLoading(true)
     setEditingItem(item)
-    setCropRotation(item.rotation)
-    setCropRatioMode('free')
-    setCropBox(item.cropData ?? { x: 10, y: 10, w: 80, h: 80 })
-  }
-
-  // ── Rotation ──────────────────────────────────────────────────────────────
-
-  const rotateImage = () => {
-    setCropRotation((prev) => (prev + 90) % 360)
-    // Reset crop to full image after rotation to avoid confusion
+    setEditorRotation(item.rotation)
+    setRatioMode('free')
     setCropBox({ x: 5, y: 5, w: 90, h: 90 })
-    setCropRatioMode('free')
+
+    try {
+      const rotated = await renderRotatedCanvas(item.src, item.rotation)
+      setWorkingSrc(rotated)
+    } catch {
+      setWorkingSrc(item.editedSrc)
+    } finally {
+      setEditorLoading(false)
+    }
   }
 
-  // ── Aspect Ratio Presets ──────────────────────────────────────────────────
+  // ── Rotate in editor (bakes into workingSrc) ──────────────────────────────
 
-  const handleRatioModeChange = (mode: RatioMode) => {
-    setCropRatioMode(mode)
+  const rotateInEditor = async () => {
+    if (!workingSrc) return
+    setEditorLoading(true)
+    const newRot = (editorRotation + 90) % 360
+    try {
+      // Rotate workingSrc by additional 90°
+      const rotated = await renderRotatedCanvas(workingSrc, 90)
+      setWorkingSrc(rotated)
+      setEditorRotation(newRot)
+      setCropBox({ x: 5, y: 5, w: 90, h: 90 })
+      setRatioMode('free')
+    } finally {
+      setEditorLoading(false)
+    }
+  }
+
+  // ── Aspect ratio preset ───────────────────────────────────────────────────
+
+  const handleRatioChange = (mode: RatioMode) => {
+    setRatioMode(mode)
     if (mode === 'free') return
 
-    const img = editorImgRef.current
+    const img = workingImgRef.current
     if (!img) return
 
-    const ratio = getTargetRatio(mode, img.naturalWidth, img.naturalHeight, cropRotation)
+    const ratio = getRatioValue(mode, img.naturalWidth, img.naturalHeight)
     if (ratio < 0) return
 
-    // We work in % of the displayed image container, which always has ratio imgW/imgH (unrotated)
-    // The crop box percentages are relative to the rotated display dimensions.
-    // We want an 80% wide box by default, then derive height from the target ratio.
-    // But "ratio" here is width/height in image-pixel space.
-    // The displayed overlay container is always the same aspect as the rotated image,
-    // so we can just set w/h in terms of display percentages.
-    // We'll use 80% width max then derive height:
-    const displayRatio = ratio // same ratio because overlay matches rotated image dims
-    let newW = 80
-    let newH = newW / displayRatio
-    if (newH > 90) {
-      newH = 90
-      newW = newH * displayRatio
-    }
-    if (newW > 90) {
-      newW = 90
-      newH = newW / displayRatio
-    }
-    const newX = (100 - newW) / 2
-    const newY = (100 - newH) / 2
-    setCropBox({ x: newX, y: newY, w: newW, h: newH })
+    // Display ratio = naturalWidth / naturalHeight of the working (already-rotated) image
+    const displayRatio = img.naturalWidth / img.naturalHeight
+    // pctRatio: how much wider (in %) is the crop box compared to the container
+    const pctRatio = ratio / displayRatio
+
+    let newW = 85
+    let newH = newW / pctRatio
+    if (newH > 85) { newH = 85; newW = newH * pctRatio }
+    if (newW > 92) { newW = 92; newH = newW / pctRatio }
+
+    setCropBox({
+      x: (100 - newW) / 2,
+      y: (100 - newH) / 2,
+      w: newW,
+      h: newH,
+    })
   }
 
-  // ── Crop Interaction ──────────────────────────────────────────────────────
-  // 
-  // The crop overlay sits directly on top of the image (after rotation is applied
-  // to the image via CSS transform). The overlay itself does NOT rotate — it
-  // always has the same bounding rect as the displayed (rotated) image. This
-  // means crop percentages map 1-to-1 to the overlay container pixels.
-  //
-  // On mousedown / touchstart we record:
-  //   • type: drag or resize
-  //   • handle: which corner/edge
-  //   • startClientX / Y: pointer position in screen px
-  //   • startBox: the crop box at interaction start
-  //
-  // On move we convert the pointer delta into % relative to overlay dims.
+  // ── Drag / Resize interaction ─────────────────────────────────────────────
 
-  const getClientXY = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) => {
+  const getPointer = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) => {
     if ('touches' in e) {
-      const t = (e as TouchEvent | React.TouchEvent).touches
-      if (t.length > 0) return { clientX: t[0].clientX, clientY: t[0].clientY }
-      // touchend has no touches, use changedTouches
+      const t = (e as any).touches
+      if (t.length > 0) return { x: t[0].clientX, y: t[0].clientY }
       const ct = (e as any).changedTouches
-      if (ct && ct.length > 0) return { clientX: ct[0].clientX, clientY: ct[0].clientY }
+      if (ct?.length > 0) return { x: ct[0].clientX, y: ct[0].clientY }
     }
-    return { clientX: (e as MouseEvent | React.MouseEvent).clientX, clientY: (e as MouseEvent | React.MouseEvent).clientY }
+    return { x: (e as any).clientX, y: (e as any).clientY }
   }
 
-  const handleInteractionStart = useCallback(
-    (e: React.MouseEvent | React.TouchEvent, handle: ResizeHandle | null) => {
+  const startInteraction = useCallback(
+    (e: React.MouseEvent | React.TouchEvent, handle: Handle | null) => {
       e.stopPropagation()
       if (e.cancelable) e.preventDefault()
-
-      const { clientX, clientY } = getClientXY(e)
-
-      interactionRef.current = {
+      const { x, y } = getPointer(e)
+      interaction.current = {
         type: handle ? 'resize' : 'drag',
         handle,
-        startClientX: clientX,
-        startClientY: clientY,
-        startBox: { ...cropBox }
+        startX: x,
+        startY: y,
+        startBox: { ...cropBox },
       }
     },
     [cropBox]
@@ -250,244 +285,185 @@ export default function PdfCreatorPage() {
   useEffect(() => {
     if (!editingItem) return
 
-    const handleMove = (e: MouseEvent | TouchEvent) => {
-      if (!interactionRef.current) return
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!interaction.current) return
       if (e.cancelable) e.preventDefault()
 
-      const overlay = cropOverlayRef.current
+      const overlay = overlayRef.current
       if (!overlay) return
 
       const rect = overlay.getBoundingClientRect()
-      const overlayW = rect.width
-      const overlayH = rect.height
+      const { x: cx, y: cy } = getPointer(e)
+      const { startX, startY, startBox, type, handle } = interaction.current
 
-      const { clientX, clientY } = getClientXY(e)
-      const { startClientX, startClientY, startBox, type, handle } = interactionRef.current
-
-      // Convert pixel delta → percentage of overlay dimensions
-      const dpx = clientX - startClientX
-      const dpy = clientY - startClientY
-      const dx = (dpx / overlayW) * 100
-      const dy = (dpy / overlayH) * 100
+      // Convert px delta → % of overlay
+      const dx = ((cx - startX) / rect.width) * 100
+      const dy = ((cy - startY) / rect.height) * 100
 
       if (type === 'drag') {
-        const newX = clamp(startBox.x + dx, 0, 100 - startBox.w)
-        const newY = clamp(startBox.y + dy, 0, 100 - startBox.h)
-        setCropBox({ ...startBox, x: newX, y: newY })
+        setCropBox({
+          ...startBox,
+          x: clamp(startBox.x + dx, 0, 100 - startBox.w),
+          y: clamp(startBox.y + dy, 0, 100 - startBox.h),
+        })
         return
       }
 
-      // ── Resize ──
+      // resize
       if (!handle) return
-
-      const img = editorImgRef.current
-      const ratioMode = cropRatioMode
-
-      let { x: left, y: top, w, h } = startBox
-      const right = left + w
-      const bottom = top + h
+      const L = startBox.x, R = startBox.x + startBox.w
+      const T = startBox.y, B = startBox.y + startBox.h
+      const img = workingImgRef.current
 
       if (ratioMode === 'free') {
-        let newLeft = left, newRight = right, newTop = top, newBottom = bottom
-
-        if (handle.includes('w')) newLeft = clamp(left + dx, 0, right - 5)
-        if (handle.includes('e')) newRight = clamp(right + dx, left + 5, 100)
-        if (handle.includes('n')) newTop = clamp(top + dy, 0, bottom - 5)
-        if (handle.includes('s')) newBottom = clamp(bottom + dy, top + 5, 100)
-
-        setCropBox({
-          x: newLeft,
-          y: newTop,
-          w: newRight - newLeft,
-          h: newBottom - newTop
-        })
+        let nL = L, nR = R, nT = T, nB = B
+        if (handle.includes('w')) nL = clamp(L + dx, 0, R - 5)
+        if (handle.includes('e')) nR = clamp(R + dx, L + 5, 100)
+        if (handle.includes('n')) nT = clamp(T + dy, 0, B - 5)
+        if (handle.includes('s')) nB = clamp(B + dy, T + 5, 100)
+        setCropBox({ x: nL, y: nT, w: nR - nL, h: nB - nT })
       } else {
-        // Locked ratio resize
         const ratio = img
-          ? getTargetRatio(ratioMode, img.naturalWidth, img.naturalHeight, cropRotation)
+          ? getRatioValue(ratioMode, img.naturalWidth, img.naturalHeight) /
+            (img.naturalWidth / img.naturalHeight)
           : 1
 
-        let newW = w
-        let newH = h
-        let newX = left
-        let newY = top
+        let nX = L, nY = T, nW = startBox.w, nH = startBox.h
 
         if (handle === 'se') {
-          newW = clamp(w + dx, 5, 100 - left)
-          newH = newW / ratio
-          if (top + newH > 100) { newH = 100 - top; newW = newH * ratio }
-          newX = left; newY = top
+          nW = clamp(startBox.w + dx, 5, 100 - L)
+          nH = nW / ratio
+          if (T + nH > 100) { nH = 100 - T; nW = nH * ratio }
+          nX = L; nY = T
         } else if (handle === 'sw') {
-          newW = clamp(w - dx, 5, right)
-          newH = newW / ratio
-          if (top + newH > 100) { newH = 100 - top; newW = newH * ratio }
-          newX = right - newW; newY = top
+          nW = clamp(startBox.w - dx, 5, R)
+          nH = nW / ratio
+          if (T + nH > 100) { nH = 100 - T; nW = nH * ratio }
+          nX = R - nW; nY = T
         } else if (handle === 'ne') {
-          newW = clamp(w + dx, 5, 100 - left)
-          newH = newW / ratio
-          if (newH > bottom) { newH = bottom; newW = newH * ratio }
-          newX = left; newY = bottom - newH
+          nW = clamp(startBox.w + dx, 5, 100 - L)
+          nH = nW / ratio
+          if (nH > B) { nH = B; nW = nH * ratio }
+          nX = L; nY = B - nH
         } else if (handle === 'nw') {
-          newW = clamp(w - dx, 5, right)
-          newH = newW / ratio
-          if (newH > bottom) { newH = bottom; newW = newH * ratio }
-          newX = right - newW; newY = bottom - newH
+          nW = clamp(startBox.w - dx, 5, R)
+          nH = nW / ratio
+          if (nH > B) { nH = B; nW = nH * ratio }
+          nX = R - nW; nY = B - nH
         } else {
-          // Edge handles in ratio mode — treat like se
-          newW = clamp(w + dx, 5, 100 - left)
-          newH = newW / ratio
-          if (top + newH > 100) { newH = 100 - top; newW = newH * ratio }
-          newX = left; newY = top
+          // edge handles in ratio mode
+          nW = clamp(startBox.w + dx, 5, 100 - L)
+          nH = nW / ratio
+          if (T + nH > 100) { nH = 100 - T; nW = nH * ratio }
+          nX = L; nY = T
         }
-
-        setCropBox({ x: newX, y: newY, w: newW, h: newH })
+        setCropBox({ x: nX, y: nY, w: nW, h: nH })
       }
     }
 
-    const handleUp = () => {
-      interactionRef.current = null
-    }
+    const onUp = () => { interaction.current = null }
 
-    window.addEventListener('mousemove', handleMove, { passive: false })
-    window.addEventListener('mouseup', handleUp)
-    window.addEventListener('touchmove', handleMove, { passive: false })
-    window.addEventListener('touchend', handleUp)
-
+    window.addEventListener('mousemove', onMove, { passive: false })
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('touchmove', onMove, { passive: false })
+    window.addEventListener('touchend', onUp)
     return () => {
-      window.removeEventListener('mousemove', handleMove)
-      window.removeEventListener('mouseup', handleUp)
-      window.removeEventListener('touchmove', handleMove)
-      window.removeEventListener('touchend', handleUp)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchmove', onMove)
+      window.removeEventListener('touchend', onUp)
     }
-  }, [editingItem, cropRotation, cropRatioMode])
+  }, [editingItem, ratioMode])
 
-  // ── Save Crop & Rotate ────────────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────────────
 
-  const saveEdits = () => {
-    if (!editingItem) return
-
-    const img = new Image()
-    img.src = editingItem.src
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      // Map crop % → pixel coordinates on the *original* (unrotated) image
-      // Because cropBox is in terms of the rotated display, we must rotate back.
-      //
-      // Strategy: draw image rotated on a temp canvas, then crop from that.
-      const srcW = img.naturalWidth
-      const srcH = img.naturalHeight
-      const is90or270 = cropRotation === 90 || cropRotation === 270
-
-      // Step 1: rotate the full image onto a temp canvas
-      const rotCanvas = document.createElement('canvas')
-      rotCanvas.width = is90or270 ? srcH : srcW
-      rotCanvas.height = is90or270 ? srcW : srcH
-      const rotCtx = rotCanvas.getContext('2d')!
-      rotCtx.translate(rotCanvas.width / 2, rotCanvas.height / 2)
-      rotCtx.rotate((cropRotation * Math.PI) / 180)
-      rotCtx.drawImage(img, -srcW / 2, -srcH / 2, srcW, srcH)
-
-      // Step 2: crop from the rotated canvas using cropBox %
-      const cropX = (cropBox.x / 100) * rotCanvas.width
-      const cropY = (cropBox.y / 100) * rotCanvas.height
-      const cropW = (cropBox.w / 100) * rotCanvas.width
-      const cropH = (cropBox.h / 100) * rotCanvas.height
-
-      canvas.width = cropW
-      canvas.height = cropH
-      ctx.drawImage(rotCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-
-      const editedSrc = canvas.toDataURL('image/jpeg', 0.92)
-
+  const saveEdits = async () => {
+    if (!editingItem || !workingSrc) return
+    setEditorLoading(true)
+    try {
+      // workingSrc is already rotated — just crop it directly
+      const cropped = await cropCanvas(workingSrc, cropBox)
       setImages((prev) =>
         prev.map((item) =>
           item.id === editingItem.id
-            ? { ...item, editedSrc, rotation: cropRotation, cropData: cropBox }
+            ? { ...item, editedSrc: cropped, rotation: editorRotation }
             : item
         )
       )
       setEditingItem(null)
+    } finally {
+      setEditorLoading(false)
     }
   }
 
-  // ── PDF Generation ────────────────────────────────────────────────────────
+  // ── PDF generation ────────────────────────────────────────────────────────
 
   const generatePdf = async () => {
     if (images.length === 0) return
     setGenerating(true)
-
     try {
-      const loadedImages = await Promise.all(
+      const loaded = await Promise.all(
         images.map((item) =>
-          new Promise<{ img: HTMLImageElement; width: number; height: number }>((resolve, reject) => {
-            const image = new Image()
-            image.src = item.editedSrc
-            image.onload = () => resolve({ img: image, width: image.naturalWidth, height: image.naturalHeight })
-            image.onerror = (err) => reject(err)
+          new Promise<{ w: number; h: number }>((resolve, reject) => {
+            const img = new Image()
+            img.src = item.editedSrc
+            img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+            img.onerror = reject
           })
         )
       )
 
       const a4W = 210, a4H = 297
       const ltW = 215.9, ltH = 279.4
-      const marginSize = pageSize === 'original' ? 0 : (margin === 'none' ? 0 : margin === 'small' ? 10 : 20)
+      const mg = margin === 'none' ? 0 : margin === 'small' ? 10 : 20
 
-      let firstPageW = a4W, firstPageH = a4H
-      if (pageSize === 'letter') { firstPageW = ltW; firstPageH = ltH }
-      else if (pageSize === 'original' && loadedImages.length > 0) {
-        firstPageW = loadedImages[0].width * 0.264583
-        firstPageH = loadedImages[0].height * 0.264583
+      let fpW = a4W, fpH = a4H
+      if (pageSize === 'letter') { fpW = ltW; fpH = ltH }
+      else if (pageSize === 'original' && loaded.length > 0) {
+        fpW = loaded[0].w * 0.264583; fpH = loaded[0].h * 0.264583
       }
 
-      let firstOri: 'p' | 'l' = 'p'
-      if (pageSize !== 'original' && loadedImages.length > 0) {
-        const fi = loadedImages[0]
-        if (orientation === 'landscape' || (orientation === 'auto' && fi.width > fi.height)) {
-          firstOri = 'l'
-          const t = firstPageW; firstPageW = firstPageH; firstPageH = t
+      let fOri: 'p' | 'l' = 'p'
+      if (pageSize !== 'original' && loaded.length > 0) {
+        const fi = loaded[0]
+        if (orientation === 'landscape' || (orientation === 'auto' && fi.w > fi.h)) {
+          fOri = 'l'; [fpW, fpH] = [fpH, fpW]
         }
       }
 
       const pdf = new jsPDF({
-        orientation: firstOri,
+        orientation: fOri,
         unit: 'mm',
-        format: pageSize === 'original' ? [firstPageW, firstPageH] : pageSize
+        format: pageSize === 'original' ? [fpW, fpH] : pageSize,
       })
 
-      for (let i = 0; i < loadedImages.length; i++) {
-        const { width: imgWidth, height: imgHeight } = loadedImages[i]
-        let pageW = a4W, pageH = a4H
-        if (pageSize === 'letter') { pageW = ltW; pageH = ltH }
-        else if (pageSize === 'original') { pageW = imgWidth * 0.264583; pageH = imgHeight * 0.264583 }
+      for (let i = 0; i < loaded.length; i++) {
+        const { w: iW, h: iH } = loaded[i]
+        let pgW = a4W, pgH = a4H
+        if (pageSize === 'letter') { pgW = ltW; pgH = ltH }
+        else if (pageSize === 'original') { pgW = iW * 0.264583; pgH = iH * 0.264583 }
 
-        let finalOri: 'portrait' | 'landscape' = 'portrait'
-        if (orientation === 'landscape' || (orientation === 'auto' && imgWidth > imgHeight)) finalOri = 'landscape'
-        if (finalOri === 'landscape' && pageSize !== 'original') { const t = pageW; pageW = pageH; pageH = t }
+        let ori: 'portrait' | 'landscape' = 'portrait'
+        if (orientation === 'landscape' || (orientation === 'auto' && iW > iH)) ori = 'landscape'
+        if (ori === 'landscape' && pageSize !== 'original') [pgW, pgH] = [pgH, pgW]
 
         if (i > 0) {
-          if (pageSize === 'original') pdf.addPage([pageW, pageH], 'p')
-          else pdf.addPage(pageSize, finalOri === 'landscape' ? 'l' : 'p')
+          if (pageSize === 'original') pdf.addPage([pgW, pgH], 'p')
+          else pdf.addPage(pageSize, ori === 'landscape' ? 'l' : 'p')
         }
 
-        const pw = pageW - marginSize * 2
-        const ph = pageH - marginSize * 2
-        const ir = imgWidth / imgHeight
-        const pr = pw / ph
+        const pw = pgW - mg * 2, ph = pgH - mg * 2
+        const ir = iW / iH, pr = pw / ph
         let dw = pw, dh = ph
         if (ir > pr) dh = pw / ir; else dw = ph * ir
 
-        const xOff = marginSize + (pw - dw) / 2
-        const yOff = marginSize + (ph - dh) / 2
         pdf.setPage(i + 1)
-        pdf.addImage(images[i].editedSrc, 'JPEG', xOff, yOff, dw, dh)
+        pdf.addImage(images[i].editedSrc, 'JPEG', mg + (pw - dw) / 2, mg + (ph - dh) / 2, dw, dh)
       }
 
       pdf.save(`LouisAI_PDF_${Date.now()}.pdf`)
     } catch (err) {
-      console.error('PDF Generation Failed:', err)
+      console.error(err)
       alert('ไม่สามารถสร้างไฟล์ PDF ได้ โปรดลองใหม่อีกครั้ง')
     } finally {
       setGenerating(false)
@@ -509,60 +485,52 @@ export default function PdfCreatorPage() {
             จัดเรียง ครอบรูปภาพ และหมุนภาพ พร้อมรวมไฟล์เป็น PDF เอกสารคุณภาพสูง
           </p>
         </div>
-
         <button
           onClick={generatePdf}
           disabled={images.length === 0 || generating}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white font-semibold rounded-2xl shadow-lg shadow-emerald-950/20 transition-all duration-200 transform active:scale-95 shrink-0"
+          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold rounded-2xl shadow-lg transition-all active:scale-95 shrink-0"
         >
           {generating ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>กำลังสร้าง PDF...</span>
-            </>
+            <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>กำลังสร้าง PDF...</span></>
           ) : (
-            <>
-              <Download className="h-5 w-5" />
-              <span>ดาวน์โหลดไฟล์ PDF ({images.length} หน้า)</span>
-            </>
+            <><Download className="h-5 w-5" /><span>ดาวน์โหลด PDF ({images.length} หน้า)</span></>
           )}
         </button>
       </div>
 
-      {/* Main Grid */}
+      {/* Main grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Upload & Image Grid */}
+        {/* Image list */}
         <div className="lg:col-span-2 space-y-6">
           {images.length === 0 ? (
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-800 hover:border-emerald-500/50 bg-slate-900/30 hover:bg-slate-900/50 rounded-3xl p-12 text-center cursor-pointer transition-all duration-300 group flex flex-col items-center justify-center space-y-4 min-h-[350px]"
+              className="border-2 border-dashed border-slate-800 hover:border-emerald-500/50 bg-slate-900/30 hover:bg-slate-900/50 rounded-3xl p-12 text-center cursor-pointer transition-all group flex flex-col items-center justify-center space-y-4 min-h-[350px]"
             >
-              <div className="p-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl group-hover:scale-110 transition-transform duration-300">
+              <div className="p-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl group-hover:scale-110 transition-transform">
                 <Upload className="h-8 w-8" />
               </div>
               <div className="space-y-1">
                 <h3 className="text-white font-bold text-base">อัปโหลดรูปภาพเพื่อเริ่มทำ PDF</h3>
-                <p className="text-sm text-slate-400 max-w-xs">ลากไฟล์รูปภาพมาวางที่นี่ หรือคลิกเพื่อค้นหาและเลือกรูปภาพ</p>
+                <p className="text-sm text-slate-400 max-w-xs">ลากไฟล์มาวางหรือคลิกเพื่อเลือก</p>
               </div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-slate-500">
-                <Info className="h-3.5 w-3.5" /> รองรับไฟล์ PNG, JPG, JPEG
+                <Info className="h-3.5 w-3.5" /> PNG, JPG, JPEG
               </div>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="flex justify-between items-center px-1">
                 <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-                  ลำดับหน้าในเอกสาร ({images.length} หน้า)
+                  ลำดับหน้า ({images.length} หน้า)
                 </span>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-bold bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl transition-all"
                 >
-                  <Plus className="h-3.5 w-3.5" /> เพิ่มรูปภาพ
+                  <Plus className="h-3.5 w-3.5" /> เพิ่มรูป
                 </button>
               </div>
-
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {images.map((img, idx) => (
                   <div
@@ -571,14 +539,14 @@ export default function PdfCreatorPage() {
                     onDragStart={() => handleDragStart(idx)}
                     onDragOver={handleDragOver}
                     onDrop={() => handleDrop(idx)}
-                    className={`bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 space-y-3 relative group transition-all duration-200 ${
+                    className={`bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 space-y-3 relative transition-all cursor-grab active:cursor-grabbing ${
                       draggedIndex === idx ? 'opacity-30 border-emerald-500' : 'hover:border-slate-700'
-                    } cursor-grab active:cursor-grabbing`}
+                    }`}
                   >
                     <div className="absolute top-4 left-4 z-10 px-2 py-0.5 bg-slate-950/80 backdrop-blur border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg">
                       หน้า {idx + 1}
                     </div>
-                    <div className="aspect-[3/4] w-full bg-slate-950 rounded-xl overflow-hidden relative flex items-center justify-center">
+                    <div className="aspect-[3/4] w-full bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={img.editedSrc} alt={img.name} className="max-w-full max-h-full object-contain pointer-events-none" />
                     </div>
@@ -586,30 +554,22 @@ export default function PdfCreatorPage() {
                     <div className="grid grid-cols-2 gap-1.5">
                       <button
                         onClick={() => openEditor(img)}
-                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-emerald-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 hover:border-emerald-500/30 transition-all"
+                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-emerald-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 transition-all"
                       >
                         <Crop className="h-3 w-3" /> ครอบ/หมุน
                       </button>
                       <button
                         onClick={() => handleDelete(img.id)}
-                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-rose-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 hover:border-rose-500/30 transition-all"
+                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-rose-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 transition-all"
                       >
                         <Trash2 className="h-3 w-3" /> ลบออก
                       </button>
                     </div>
                     <div className="flex gap-1">
-                      <button
-                        disabled={idx === 0}
-                        onClick={() => moveItem(idx, 'up')}
-                        className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all"
-                      >
+                      <button disabled={idx === 0} onClick={() => moveItem(idx, 'up')} className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all">
                         <ArrowUp className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        disabled={idx === images.length - 1}
-                        onClick={() => moveItem(idx, 'down')}
-                        className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all"
-                      >
+                      <button disabled={idx === images.length - 1} onClick={() => moveItem(idx, 'down')} className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all">
                         <ArrowDown className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -620,330 +580,257 @@ export default function PdfCreatorPage() {
           )}
         </div>
 
-        {/* Settings Sidebar */}
+        {/* Settings sidebar */}
         <div className="space-y-6">
           <div className="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-6 space-y-6">
             <h2 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-4">
               🛠️ การตั้งค่าเอกสาร
             </h2>
-
-            {/* Page Size */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">ขนาดหน้ากระดาษ</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'a4', label: 'A4' },
-                  { value: 'letter', label: 'Letter' },
-                  { value: 'original', label: 'ดั้งเดิม' }
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setPageSize(opt.value as any)}
-                    className={`py-2 px-1 text-xs font-semibold rounded-xl border transition-all ${
-                      pageSize === opt.value
-                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
-                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+            {[
+              {
+                label: 'ขนาดหน้ากระดาษ',
+                opts: [{ v: 'a4', l: 'A4' }, { v: 'letter', l: 'Letter' }, { v: 'original', l: 'ดั้งเดิม' }],
+                val: pageSize, set: setPageSize,
+              },
+              {
+                label: 'การวางแนว',
+                opts: [{ v: 'auto', l: 'ออโต้' }, { v: 'portrait', l: 'แนวตั้ง' }, { v: 'landscape', l: 'แนวนอน' }],
+                val: orientation, set: setOrientation,
+              },
+              {
+                label: 'ระยะขอบกระดาษ',
+                opts: [{ v: 'none', l: 'ไม่มี' }, { v: 'small', l: '10 มม.' }, { v: 'medium', l: '20 มม.' }],
+                val: margin, set: setMargin,
+              },
+            ].map(({ label, opts, val, set }) => (
+              <div key={label} className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {opts.map((o) => (
+                    <button
+                      key={o.v}
+                      onClick={() => (set as any)(o.v)}
+                      className={`py-2 px-1 text-xs font-semibold rounded-xl border transition-all ${
+                        val === o.v ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400' : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* Orientation */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">การวางแนว</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'auto', label: 'ออโต้' },
-                  { value: 'portrait', label: 'แนวตั้ง' },
-                  { value: 'landscape', label: 'แนวนอน' }
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setOrientation(opt.value as any)}
-                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
-                      orientation === opt.value
-                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
-                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Margin */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">ระยะขอบกระดาษ</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'none', label: 'ไม่มี' },
-                  { value: 'small', label: '10 มม.' },
-                  { value: 'medium', label: '20 มม.' }
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setMargin(opt.value as any)}
-                    className={`py-2 px-1 text-xs font-semibold rounded-xl border transition-all ${
-                      margin === opt.value
-                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
-                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl text-[11px] text-slate-400 space-y-2 leading-relaxed">
+            ))}
+            <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl text-[11px] text-slate-400 space-y-1.5 leading-relaxed">
               <div className="font-semibold text-slate-300 flex items-center gap-1.5">
                 <Info className="h-3.5 w-3.5 text-emerald-500" /> คำแนะนำ
               </div>
-              <p>1. อัปโหลดรูปภาพที่มีทิศทางเดียวกันเพื่อความสวยงาม</p>
-              <p>2. กด <strong>ครอบ/หมุน</strong> เพื่อครอบตัดหรือหมุนภาพ</p>
-              <p>3. ลากการ์ดสลับที่กัน หรือใช้ปุ่ม ⬆️⬇️ เพื่อเรียงลำดับ</p>
+              <p>1. กด <strong>ครอบ/หมุน</strong> เพื่อตัดและหมุนรูป</p>
+              <p>2. ลากกล่องสีเขียวเพื่อย้าย ดึงมุมเพื่อปรับขนาด</p>
+              <p>3. ลากการ์ดหรือใช้ปุ่ม ⬆️⬇️ เพื่อเรียงลำดับ</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Hidden File Input */}
       <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple accept="image/*" className="hidden" />
 
       {/* ── Crop Editor Modal ── */}
       {editingItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[92vh]">
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col overflow-hidden max-h-[96vh]">
 
-            {/* Modal Header */}
-            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/40 border-b border-slate-800 flex justify-between items-center shrink-0">
+            {/* Header */}
+            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/50 border-b border-slate-800 flex justify-between items-center shrink-0">
               <div>
-                <h3 className="font-bold text-white text-base flex items-center gap-2">
-                  <Crop className="h-4 w-4 text-emerald-400" />
-                  ครอบตัด &amp; หมุนรูปภาพ
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Crop className="h-4 w-4 text-emerald-400" /> ครอบตัด &amp; หมุนรูปภาพ
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">ลากกล่องหรือดึงจุดมุม/ขอบเพื่อครอบตัด</p>
+                <p className="text-xs text-slate-400 mt-0.5">ลากกล่องเพื่อย้าย • ดึงจุดมุมเพื่อปรับขนาด</p>
               </div>
-              <button
-                onClick={() => setEditingItem(null)}
-                className="p-2 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-all"
-              >
+              <button onClick={() => setEditingItem(null)} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-all">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Aspect Ratio Presets — top of modal body for easy mobile thumb reach */}
-            <div className="px-4 pt-3 pb-2 sm:px-6 bg-slate-950/30 border-b border-slate-800/60 shrink-0">
+            {/* Ratio preset buttons */}
+            <div className="px-4 pt-3 pb-2.5 sm:px-6 bg-slate-950/30 border-b border-slate-800/60 shrink-0">
               <div className="flex flex-wrap gap-2 justify-center">
                 {([
-                  { value: 'free',  label: '✂️ อิสระ' },
-                  { value: '1:1',   label: '⬛ 1:1' },
-                  { value: 'a4',    label: '📄 A4' },
-                  { value: '4:3',   label: '🖼 4:3' },
-                  { value: '16:9',  label: '🎬 16:9' }
-                ] as { value: RatioMode; label: string }[]).map((ratio) => (
+                  { v: 'free', l: '✂️ อิสระ' },
+                  { v: '1:1',  l: '⬛ 1:1'  },
+                  { v: 'a4',   l: '📄 A4'   },
+                  { v: '4:3',  l: '🖼 4:3'  },
+                  { v: '16:9', l: '🎬 16:9' },
+                ] as { v: RatioMode; l: string }[]).map(({ v, l }) => (
                   <button
-                    key={ratio.value}
-                    onClick={() => handleRatioModeChange(ratio.value)}
+                    key={v}
+                    onClick={() => handleRatioChange(v)}
                     className={`px-3.5 py-2 text-xs font-semibold rounded-xl border transition-all ${
-                      cropRatioMode === ratio.value
-                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-950/20'
+                      ratioMode === v
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow shadow-emerald-950'
                         : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-white hover:border-slate-600'
                     }`}
                   >
-                    {ratio.label}
+                    {l}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Canvas Working Area */}
-            <div className="flex-1 bg-slate-950 flex items-center justify-center overflow-hidden p-4 sm:p-6 min-h-[240px]">
-              {/*
-                ARCHITECTURE:
-                - Outer wrapper: rotates the image using CSS transform
-                - Inner .crop-overlay: sits on top WITHOUT rotating — this is where crop % maps to
-                - This means getBoundingClientRect() on crop-overlay always gives the correct
-                  unrotated display rect, so pointer math is always consistent
-              */}
-              <div className="relative inline-flex items-center justify-center">
-                {/* Rotated image wrapper */}
-                <div
-                  style={{
-                    transform: `rotate(${cropRotation}deg)`,
-                    transition: 'transform 0.25s ease-out',
-                    lineHeight: 0
-                  }}
-                >
+            {/* Canvas area */}
+            <div className="flex-1 bg-slate-950 flex items-center justify-center p-4 sm:p-6 min-h-[260px] overflow-hidden">
+              {editorLoading ? (
+                <div className="flex flex-col items-center gap-3 text-slate-400">
+                  <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm">กำลังโหลด...</span>
+                </div>
+              ) : workingSrc ? (
+                /**
+                 * LAYOUT:
+                 * - `relative inline-block` parent → shrinks to image size
+                 * - img displayed naturally (no CSS rotation)
+                 * - overlay div is `absolute inset-0` → exactly matches image px
+                 * - crop box % maps 1:1 to image display px — no math tricks
+                 */
+                <div className="relative inline-block" style={{ lineHeight: 0, maxWidth: '100%' }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    ref={editorImgRef}
-                    src={editingItem.src}
-                    alt="Editor"
-                    className="block rounded-lg"
+                    ref={workingImgRef}
+                    src={workingSrc}
+                    alt="Working"
+                    draggable={false}
                     style={{
-                      maxWidth: 'min(100%, 520px)',
-                      maxHeight: 'min(46vh, 380px)',
+                      display: 'block',
+                      maxWidth: 'min(100vw - 32px, 560px)',
+                      maxHeight: 'min(42vh, 360px)',
                       objectFit: 'contain',
+                      userSelect: 'none',
                       pointerEvents: 'none',
-                      userSelect: 'none'
+                      borderRadius: 8,
                     }}
                   />
-                </div>
 
-                {/* Crop Overlay — positioned absolute, covers rotated image display area exactly */}
-                {/* We use the same max dims as the image to position it */}
-                <div
-                  ref={cropOverlayRef}
-                  className="absolute inset-0 overflow-hidden rounded-lg"
-                  style={{ cursor: 'default' }}
-                >
-                  {/* Dark mask — outside crop area */}
-                  <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(0,0,0,0.55)' }} />
-
-                  {/* Crop window cutout (simulated with clip) */}
-                  {/* We use the crop box border + absolute positioning instead */}
+                  {/* Crop overlay — same exact bounds as img */}
                   <div
-                    className="absolute border-2 border-emerald-400 rounded-sm"
-                    style={{
-                      left: `${cropBox.x}%`,
-                      top: `${cropBox.y}%`,
-                      width: `${cropBox.w}%`,
-                      height: `${cropBox.h}%`,
-                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)',
-                      background: 'transparent',
-                      cursor: 'move'
-                    }}
-                    onMouseDown={(e) => handleInteractionStart(e, null)}
-                    onTouchStart={(e) => handleInteractionStart(e, null)}
+                    ref={overlayRef}
+                    className="absolute inset-0 overflow-hidden rounded-lg"
                   >
-                    {/* Rule-of-thirds grid */}
-                    <div className="absolute inset-0 pointer-events-none" style={{
-                      backgroundImage: 'linear-gradient(rgba(52,211,153,0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(52,211,153,0.2) 1px, transparent 1px)',
-                      backgroundSize: '33.33% 33.33%'
-                    }} />
+                    {/* Dark mask outside crop */}
+                    <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(0,0,0,0)' }} />
 
-                    {/* Corner handles */}
-                    {(['nw', 'ne', 'se', 'sw'] as ResizeHandle[]).map((corner) => {
-                      const isN = corner.includes('n')
-                      const isW = corner.includes('w')
-                      const cursorMap: Record<string, string> = {
-                        nw: 'nw-resize', ne: 'ne-resize', se: 'se-resize', sw: 'sw-resize'
-                      }
-                      return (
-                        <div
-                          key={corner}
-                          onMouseDown={(e) => handleInteractionStart(e, corner)}
-                          onTouchStart={(e) => handleInteractionStart(e, corner)}
-                          className="absolute z-30"
-                          style={{
-                            top: isN ? 0 : '100%',
-                            left: isW ? 0 : '100%',
-                            transform: 'translate(-50%, -50%)',
-                            width: 44,
-                            height: 44,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: cursorMap[corner],
-                            touchAction: 'none'
-                          }}
-                        >
-                          <div style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: '50%',
-                            background: '#10b981',
-                            border: '2px solid white',
-                            boxShadow: '0 1px 4px rgba(0,0,0,0.5)'
-                          }} />
-                        </div>
-                      )
-                    })}
+                    {/* Crop window */}
+                    <div
+                      className="absolute"
+                      style={{
+                        left: `${cropBox.x}%`,
+                        top: `${cropBox.y}%`,
+                        width: `${cropBox.w}%`,
+                        height: `${cropBox.h}%`,
+                        // Box shadow creates dark mask outside crop area
+                        boxShadow: '0 0 0 9999px rgba(0,0,0,0.62)',
+                        border: '2px solid #34d399',
+                        borderRadius: 2,
+                        cursor: 'move',
+                        touchAction: 'none',
+                      }}
+                      onMouseDown={(e) => startInteraction(e, null)}
+                      onTouchStart={(e) => startInteraction(e, null)}
+                    >
+                      {/* Rule-of-thirds grid */}
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{
+                          backgroundImage:
+                            'linear-gradient(rgba(52,211,153,0.25) 1px, transparent 1px), linear-gradient(90deg, rgba(52,211,153,0.25) 1px, transparent 1px)',
+                          backgroundSize: '33.33% 33.33%',
+                        }}
+                      />
 
-                    {/* Edge handles (free mode only) */}
-                    {cropRatioMode === 'free' && (['n', 's', 'e', 'w'] as ResizeHandle[]).map((edge) => {
-                      const posMap: Record<string, React.CSSProperties> = {
-                        n: { top: 0, left: '50%', transform: 'translate(-50%, -50%)', cursor: 'n-resize' },
-                        s: { top: '100%', left: '50%', transform: 'translate(-50%, -50%)', cursor: 's-resize' },
-                        e: { top: '50%', left: '100%', transform: 'translate(-50%, -50%)', cursor: 'e-resize' },
-                        w: { top: '50%', left: 0, transform: 'translate(-50%, -50%)', cursor: 'w-resize' }
-                      }
-                      const isNS = edge === 'n' || edge === 's'
-                      return (
-                        <div
-                          key={edge}
-                          onMouseDown={(e) => handleInteractionStart(e, edge)}
-                          onTouchStart={(e) => handleInteractionStart(e, edge)}
-                          className="absolute z-20"
-                          style={{
-                            ...posMap[edge],
-                            width: 44,
-                            height: 44,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            touchAction: 'none'
-                          }}
-                        >
-                          <div style={{
-                            width: isNS ? 28 : 6,
-                            height: isNS ? 6 : 28,
-                            borderRadius: 3,
-                            background: '#10b981',
-                            border: '1.5px solid white',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.5)'
-                          }} />
-                        </div>
-                      )
-                    })}
+                      {/* Corner L-brackets */}
+                      {(['nw','ne','se','sw'] as Handle[]).map((c) => {
+                        const n = c.includes('n'), w = c.includes('w')
+                        return (
+                          <div
+                            key={`lb-${c}`}
+                            className="absolute pointer-events-none"
+                            style={{
+                              top: n ? 0 : 'auto', bottom: !n ? 0 : 'auto',
+                              left: w ? 0 : 'auto', right: !w ? 0 : 'auto',
+                              width: 16, height: 16,
+                              borderTop: n ? '3px solid #10b981' : 'none',
+                              borderBottom: !n ? '3px solid #10b981' : 'none',
+                              borderLeft: w ? '3px solid #10b981' : 'none',
+                              borderRight: !w ? '3px solid #10b981' : 'none',
+                            }}
+                          />
+                        )
+                      })}
 
-                    {/* Corner L-brackets (visual only) */}
-                    {(['nw', 'ne', 'se', 'sw'] as ResizeHandle[]).map((corner) => {
-                      const isN = corner.includes('n')
-                      const isW = corner.includes('w')
-                      return (
-                        <div
-                          key={`bracket-${corner}`}
-                          className="absolute pointer-events-none"
-                          style={{
-                            top: isN ? 0 : 'auto',
-                            bottom: !isN ? 0 : 'auto',
-                            left: isW ? 0 : 'auto',
-                            right: !isW ? 0 : 'auto',
-                            width: 18,
-                            height: 18,
-                            borderTop: isN ? '3px solid #34d399' : 'none',
-                            borderBottom: !isN ? '3px solid #34d399' : 'none',
-                            borderLeft: isW ? '3px solid #34d399' : 'none',
-                            borderRight: !isW ? '3px solid #34d399' : 'none',
-                          }}
-                        />
-                      )
-                    })}
+                      {/* Corner handles (always visible) */}
+                      {(['nw','ne','se','sw'] as Handle[]).map((c) => {
+                        const n = c.includes('n'), w = c.includes('w')
+                        const cursorMap: Record<string, string> = { nw:'nw-resize', ne:'ne-resize', se:'se-resize', sw:'sw-resize' }
+                        const cur = cursorMap[c]
+                        return (
+                          <div
+                            key={`ch-${c}`}
+                            onMouseDown={(e) => startInteraction(e, c)}
+                            onTouchStart={(e) => startInteraction(e, c)}
+                            className="absolute z-30 flex items-center justify-center"
+                            style={{
+                              top: n ? 0 : '100%', left: w ? 0 : '100%',
+                              transform: 'translate(-50%,-50%)',
+                              width: 44, height: 44,
+                              cursor: cur, touchAction: 'none',
+                            }}
+                          >
+                            <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#10b981', border: '2.5px solid white', boxShadow: '0 1px 4px rgba(0,0,0,0.6)' }} />
+                          </div>
+                        )
+                      })}
+
+                      {/* Edge handles (free mode only) */}
+                      {ratioMode === 'free' && (['n','s','e','w'] as Handle[]).map((edge) => {
+                        const isNS = edge === 'n' || edge === 's'
+                        const posMap: Record<string, React.CSSProperties> = {
+                          n: { top: 0, left: '50%', transform: 'translate(-50%,-50%)', cursor: 'n-resize' },
+                          s: { top: '100%', left: '50%', transform: 'translate(-50%,-50%)', cursor: 's-resize' },
+                          e: { top: '50%', left: '100%', transform: 'translate(-50%,-50%)', cursor: 'e-resize' },
+                          w: { top: '50%', left: 0, transform: 'translate(-50%,-50%)', cursor: 'w-resize' },
+                        }
+                        const pos = posMap[edge]
+                        return (
+                          <div
+                            key={`eh-${edge}`}
+                            onMouseDown={(e) => startInteraction(e, edge)}
+                            onTouchStart={(e) => startInteraction(e, edge)}
+                            className="absolute z-20 flex items-center justify-center"
+                            style={{ ...pos, width: 44, height: 44, touchAction: 'none' }}
+                          >
+                            <div style={{ width: isNS ? 28 : 5, height: isNS ? 5 : 28, borderRadius: 3, background: '#10b981', border: '1.5px solid white', boxShadow: '0 1px 3px rgba(0,0,0,0.5)' }} />
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : null}
             </div>
 
-            {/* Modal Bottom Actions */}
-            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/40 border-t border-slate-800 flex justify-between items-center gap-3 shrink-0">
+            {/* Bottom actions */}
+            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/50 border-t border-slate-800 flex items-center gap-2 shrink-0">
               <button
-                onClick={rotateImage}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all active:scale-95"
+                onClick={rotateInEditor}
+                disabled={editorLoading}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all active:scale-95"
               >
-                <RotateCw className="h-4 w-4" />
-                <span>หมุน 90°</span>
+                <RotateCw className="h-4 w-4" /> หมุน 90°
               </button>
 
               <button
                 onClick={() => setCropBox({ x: 0, y: 0, w: 100, h: 100 })}
-                className="flex items-center gap-2 px-3 py-2.5 bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all active:scale-95"
-                title="รีเซ็ตเป็นครอบทั้งภาพ"
+                title="ครอบทั้งหมด"
+                className="p-2.5 bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl border border-slate-700/50 transition-all active:scale-95"
               >
                 <Maximize2 className="h-4 w-4" />
               </button>
@@ -957,10 +844,10 @@ export default function PdfCreatorPage() {
                 </button>
                 <button
                   onClick={saveEdits}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-md transition-all active:scale-95"
+                  disabled={editorLoading}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl shadow-md transition-all active:scale-95"
                 >
-                  <Check className="h-4 w-4" />
-                  บันทึก
+                  <Check className="h-4 w-4" /> บันทึก
                 </button>
               </div>
             </div>
