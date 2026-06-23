@@ -311,15 +311,9 @@ export default function PDFCreatorPage() {
     setGenerating(true)
 
     try {
-      const pdf = new jsPDF({
-        orientation: orientation,
-        unit: 'mm',
-        format: pageSize === 'a4' ? 'a4' : 'a4', // A4 fallback
-      })
+      let pdf: any = null
 
       for (let i = 0; i < images.length; i++) {
-        if (i > 0) pdf.addPage()
-
         const imgData = images[i].src
         
         // Wait to load dimensions
@@ -327,46 +321,70 @@ export default function PDFCreatorPage() {
           const img = new Image()
           img.src = imgData
           img.onload = () => {
-            const pageW = orientation === 'portrait' ? 210 : 297
-            const pageH = orientation === 'portrait' ? 297 : 210
-            const m = margin
+            // Convert image pixels to mm at standard 96 DPI
+            // (1 pixel = 25.4 / 96 = 0.264583 mm)
+            const pxToMm = 25.4 / 96
+            const imgW_mm = img.width * pxToMm
+            const imgH_mm = img.height * pxToMm
 
-            const availW = pageW - m * 2
-            const availH = pageH - m * 2
+            const imgIsLandscape = imgW_mm > imgH_mm
+            const pageOrientation = pageSize === 'original'
+              ? (imgIsLandscape ? 'landscape' : 'portrait')
+              : orientation
 
-            // Fit image into available page space preserving aspect ratio
-            const imgRatio = img.width / img.height
-            const availRatio = availW / availH
+            const pageFormat = pageSize === 'original'
+              ? [imgW_mm, imgH_mm] as [number, number]
+              : 'a4'
 
-            let destW = availW
-            let destH = availH
-
-            if (pageSize === 'original') {
-              // Custom document bounds matching original ratio inside margins
-              if (imgRatio > availRatio) {
-                destH = availW / imgRatio
-              } else {
-                destW = availH * imgRatio
-              }
-            } else {
-              // Exact A4 boundaries fit
-              if (imgRatio > availRatio) {
-                destH = availW / imgRatio
-              } else {
-                destW = availH * imgRatio
-              }
+            if (i === 0) {
+              pdf = new jsPDF({
+                orientation: pageOrientation,
+                unit: 'mm',
+                format: pageFormat,
+              })
+            } else if (pdf) {
+              pdf.addPage(pageFormat, pageOrientation)
             }
 
-            const x = m + (availW - destW) / 2
-            const y = m + (availH - destH) / 2
+            if (pdf) {
+              if (pageSize === 'original') {
+                // For original ratio, draw the image covering 100% of the custom page size
+                pdf.addImage(imgData, 'JPEG', 0, 0, imgW_mm, imgH_mm)
+              } else {
+                // For standard A4, scale and center it inside margins
+                const pageW = pageOrientation === 'portrait' ? 210 : 297
+                const pageH = pageOrientation === 'portrait' ? 297 : 210
+                const m = margin
 
-            pdf.addImage(imgData, 'JPEG', x, y, destW, destH)
+                const availW = pageW - m * 2
+                const availH = pageH - m * 2
+
+                const imgRatio = imgW_mm / imgH_mm
+                const availRatio = availW / availH
+
+                let destW = availW
+                let destH = availH
+
+                if (imgRatio > availRatio) {
+                  destH = availW / imgRatio
+                } else {
+                  destW = availH * imgRatio
+                }
+
+                const x = m + (availW - destW) / 2
+                const y = m + (availH - destH) / 2
+
+                pdf.addImage(imgData, 'JPEG', x, y, destW, destH)
+              }
+            }
             resolve()
           }
         })
       }
 
-      pdf.save(`${pdfFileName.trim() || 'LouisAI_Document'}.pdf`)
+      if (pdf) {
+        pdf.save(`${pdfFileName.trim() || 'LouisAI_Document'}.pdf`)
+      }
     } catch (e) {
       console.error(e)
       alert('Failed to generate PDF. Please try again.')
