@@ -186,9 +186,14 @@ export default function PdfCreatorPage() {
 
   // Draggable / Resizable Crop Box Logic (Touch & Mouse Support)
   const handleCropMouseDown = (e: React.MouseEvent | React.TouchEvent, resizeCorner: string | null = null) => {
-    e.preventDefault()
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+    if (e.cancelable) {
+      e.preventDefault()
+    }
+    
+    // Extract coordinates safely
+    const touches = 'touches' in e ? (e as any).touches : null
+    const clientX = touches && touches.length > 0 ? touches[0].clientX : (e as any).clientX
+    const clientY = touches && touches.length > 0 ? touches[0].clientY : (e as any).clientY
     
     dragStartPos.current = { x: clientX, y: clientY }
     cropBoxStart.current = { ...cropBox }
@@ -204,8 +209,10 @@ export default function PdfCreatorPage() {
     const handleMove = (e: MouseEvent | TouchEvent) => {
       if (!editingItem || (!isDraggingCrop.current && !isResizingCrop.current)) return
       
-      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
-      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+      // Extract coordinates safely
+      const touches = 'touches' in e ? (e as any).touches : null
+      const clientX = touches && touches.length > 0 ? touches[0].clientX : (e as any).clientX
+      const clientY = touches && touches.length > 0 ? touches[0].clientY : (e as any).clientY
       
       const deltaX = clientX - dragStartPos.current.x
       const deltaY = clientY - dragStartPos.current.y
