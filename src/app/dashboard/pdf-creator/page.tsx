@@ -174,17 +174,31 @@ export default function PDFCreatorPage() {
     setImages((prev) => prev.filter((img) => img.id !== id))
   }
 
+  const [cropRatioMode, setCropRatioMode] = useState<'free' | '1:1' | 'a4' | '4:3' | '16:9'>('free')
+  const [editorImageRatio, setEditorImageRatio] = useState<number>(1)
+
   // Open Crop/Rotate Modal
   const openEditor = (img: ImagePage) => {
     setEditingImage(img)
     setEditorRotation(img.rotation)
     setEditorCrop({ ...img.cropPercent })
+    setCropRatioMode('free') // Default to free on open
+    
+    // Load natural aspect ratio
+    const tempImg = new Image()
+    tempImg.src = img.originalSrc
+    tempImg.onload = () => {
+      const is90or270 = img.rotation === 90 || img.rotation === 270
+      const width = is90or270 ? tempImg.height : tempImg.width
+      const height = is90or270 ? tempImg.width : tempImg.height
+      setEditorImageRatio(width / height)
+    }
   }
 
   // Crop Box Editor Dragging Logic (Touch & Mouse friendly)
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
-  const [activeHandle, setActiveHandle] = useState<string | null>(null) // 'tl', 'tr', 'bl', 'br', 'move'
+  const [activeHandle, setActiveHandle] = useState<string | null>(null) // 'tl', 'tr', 'bl', 'br', 't', 'b', 'l', 'r', 'move'
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, handle: string) => {
     e.stopPropagation()
@@ -210,26 +224,138 @@ export default function PDFCreatorPage() {
       if (activeHandle === 'move') {
         x = Math.max(0, Math.min(100 - w, x + dx))
         y = Math.max(0, Math.min(100 - h, y + dy))
-      } else if (activeHandle === 'tl') {
-        const newX = Math.max(0, Math.min(x + w - 10, x + dx))
-        const newY = Math.max(0, Math.min(y + h - 10, y + dy))
-        w = w - (newX - x)
-        h = h - (newY - y)
-        x = newX
-        y = newY
-      } else if (activeHandle === 'tr') {
-        w = Math.max(10, Math.min(100 - x, w + dx))
-        const newY = Math.max(0, Math.min(y + h - 10, y + dy))
-        h = h - (newY - y)
-        y = newY
-      } else if (activeHandle === 'bl') {
-        const newX = Math.max(0, Math.min(x + w - 10, x + dx))
-        w = w - (newX - x)
-        x = newX
-        h = Math.max(10, Math.min(100 - y, h + dy))
-      } else if (activeHandle === 'br') {
-        w = Math.max(10, Math.min(100 - x, w + dx))
-        h = Math.max(10, Math.min(100 - y, h + dy))
+        return { x, y, w, h }
+      }
+
+      const isLocked = cropRatioMode !== 'free'
+      let R_val = 1
+      if (cropRatioMode === '1:1') R_val = 1
+      else if (cropRatioMode === 'a4') R_val = 210 / 297
+      else if (cropRatioMode === '4:3') R_val = 4 / 3
+      else if (cropRatioMode === '16:9') R_val = 16 / 9
+
+      const targetRatio = R_val / editorImageRatio // w / h target ratio in percentage space
+
+      if (!isLocked) {
+        // --- Free Mode: Drag 8 handles independently ---
+        if (activeHandle === 'tl') {
+          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
+          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
+          w = w - (newX - x)
+          h = h - (newY - y)
+          x = newX
+          y = newY
+        } else if (activeHandle === 'tr') {
+          w = Math.max(10, Math.min(100 - x, w + dx))
+          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
+          h = h - (newY - y)
+          y = newY
+        } else if (activeHandle === 'bl') {
+          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
+          w = w - (newX - x)
+          x = newX
+          h = Math.max(10, Math.min(100 - y, h + dy))
+        } else if (activeHandle === 'br') {
+          w = Math.max(10, Math.min(100 - x, w + dx))
+          h = Math.max(10, Math.min(100 - y, h + dy))
+        } else if (activeHandle === 't') {
+          const newY = Math.max(0, Math.min(y + h - 10, y + dy))
+          h = h - (newY - y)
+          y = newY
+        } else if (activeHandle === 'b') {
+          h = Math.max(10, Math.min(100 - y, h + dy))
+        } else if (activeHandle === 'l') {
+          const newX = Math.max(0, Math.min(x + w - 10, x + dx))
+          w = w - (newX - x)
+          x = newX
+        } else if (activeHandle === 'r') {
+          w = Math.max(10, Math.min(100 - x, w + dx))
+        }
+      } else {
+        // --- Locked Aspect Ratio Mode: Scale proportionally ---
+        if (activeHandle === 'br' || activeHandle === 'r' || activeHandle === 'b') {
+          let newW = w + dx
+          let newH = newW / targetRatio
+          
+          if (x + newW > 100) {
+            newW = 100 - x
+            newH = newW / targetRatio
+          }
+          if (y + newH > 100) {
+            newH = 100 - y
+            newW = newH * targetRatio
+          }
+          w = Math.max(10, newW)
+          h = Math.max(10, newH)
+        } else if (activeHandle === 'tl' || activeHandle === 't' || activeHandle === 'l') {
+          const fixedX2 = x + w
+          const fixedY2 = y + h
+          let newW = w - dx
+          let newH = newW / targetRatio
+          
+          let newX = fixedX2 - newW
+          let newY = fixedY2 - newH
+          
+          if (newX < 0) {
+            newX = 0
+            newW = fixedX2 - newX
+            newH = newW / targetRatio
+            newY = fixedY2 - newH
+          }
+          if (newY < 0) {
+            newY = 0
+            newH = fixedY2 - newY
+            newW = newH * targetRatio
+            newX = fixedX2 - newW
+          }
+          
+          x = newX
+          y = newY
+          w = Math.max(10, newW)
+          h = Math.max(10, newH)
+        } else if (activeHandle === 'tr') {
+          const fixedX1 = x
+          const fixedY2 = y + h
+          let newW = w + dx
+          let newH = newW / targetRatio
+          
+          let newY = fixedY2 - newH
+          if (x + newW > 100) {
+            newW = 100 - x
+            newH = newW / targetRatio
+            newY = fixedY2 - newH
+          }
+          if (newY < 0) {
+            newY = 0
+            newH = fixedY2 - newY
+            newW = newH * targetRatio
+          }
+          
+          y = newY
+          w = Math.max(10, newW)
+          h = Math.max(10, newH)
+        } else if (activeHandle === 'bl') {
+          const fixedX2 = x + w
+          const fixedY1 = y
+          let newW = w - dx
+          let newH = newW / targetRatio
+          
+          let newX = fixedX2 - newW
+          if (newX < 0) {
+            newX = 0
+            newW = fixedX2 - newX
+            newH = newW / targetRatio
+          }
+          if (fixedY1 + newH > 100) {
+            newH = 100 - fixedY1
+            newW = newH * targetRatio
+            newX = fixedX2 - newW
+          }
+          
+          x = newX
+          w = Math.max(10, newW)
+          h = Math.max(10, newH)
+        }
       }
 
       return { x, y, w, h }
@@ -248,7 +374,43 @@ export default function PDFCreatorPage() {
 
   // Rotate Handler
   const handleRotate = () => {
-    setEditorRotation((prev) => (prev + 90) % 360)
+    setEditorRotation((prev) => {
+      const nextRotation = (prev + 90) % 360
+      setEditorImageRatio((r) => 1 / r)
+      return nextRotation
+    })
+  }
+
+  const handleRatioModeChange = (mode: 'free' | '1:1' | 'a4' | '4:3' | '16:9') => {
+    setCropRatioMode(mode)
+    if (mode === 'free') return
+
+    let R_val = 1
+    if (mode === '1:1') R_val = 1
+    else if (mode === 'a4') R_val = 210 / 297
+    else if (mode === '4:3') R_val = 4 / 3
+    else if (mode === '16:9') R_val = 16 / 9
+
+    const targetRatio = R_val / editorImageRatio // w/h in percent space
+
+    // Snap crop box to center with the target ratio
+    let newW = 80
+    let newH = newW / targetRatio
+
+    if (newH > 80) {
+      newH = 80
+      newW = newH * targetRatio
+    }
+
+    const newX = (100 - newW) / 2
+    const newY = (100 - newH) / 2
+
+    setEditorCrop({
+      x: Math.max(0, Math.min(100, newX)),
+      y: Math.max(0, Math.min(100, newY)),
+      w: Math.max(10, Math.min(100, newW)),
+      h: Math.max(10, Math.min(100, newH)),
+    })
   }
 
   // Apply Changes (Process Canvas Cropping and Rotation)
@@ -796,26 +958,85 @@ export default function PDFCreatorPage() {
                 >
                   {/* Resize Drag Handles at 4 Corners */}
                   <div
-                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none"
+                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none z-20"
                     onPointerDown={(e) => handlePointerDown(e, 'tl')}
                     onPointerUp={handlePointerUp}
                   />
                   <div
-                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none"
+                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none z-20"
                     onPointerDown={(e) => handlePointerDown(e, 'tr')}
                     onPointerUp={handlePointerUp}
                   />
                   <div
-                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none"
+                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none z-20"
                     onPointerDown={(e) => handlePointerDown(e, 'bl')}
                     onPointerUp={handlePointerUp}
                   />
                   <div
-                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none"
+                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none z-20"
                     onPointerDown={(e) => handlePointerDown(e, 'br')}
                     onPointerUp={handlePointerUp}
                   />
+
+                  {/* 4 Side Edges Handles (Only visible in Free mode) */}
+                  {cropRatioMode === 'free' && (
+                    <>
+                      {/* Top Edge */}
+                      <div
+                        className="absolute -top-1 left-1/2 -translate-x-1/2 w-8 h-2 bg-indigo-400 border border-white rounded-full cursor-ns-resize touch-none z-10 hover:bg-indigo-300"
+                        onPointerDown={(e) => handlePointerDown(e, 't')}
+                        onPointerUp={handlePointerUp}
+                      />
+                      {/* Bottom Edge */}
+                      <div
+                        className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-2 bg-indigo-400 border border-white rounded-full cursor-ns-resize touch-none z-10 hover:bg-indigo-300"
+                        onPointerDown={(e) => handlePointerDown(e, 'b')}
+                        onPointerUp={handlePointerUp}
+                      />
+                      {/* Left Edge */}
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-8 bg-indigo-400 border border-white rounded-full cursor-ew-resize touch-none z-10 hover:bg-indigo-300"
+                        onPointerDown={(e) => handlePointerDown(e, 'l')}
+                        onPointerUp={handlePointerUp}
+                      />
+                      {/* Right Edge */}
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-8 bg-indigo-400 border border-white rounded-full cursor-ew-resize touch-none z-10 hover:bg-indigo-300"
+                        onPointerDown={(e) => handlePointerDown(e, 'r')}
+                        onPointerUp={handlePointerUp}
+                      />
+                    </>
+                  )}
                 </div>
+              </div>
+            </div>
+
+            {/* Aspect Ratio Presets */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">
+                {lang === 'th' ? 'อัตราส่วนการครอปตัด' : 'Crop Aspect Ratio'}
+              </label>
+              <div className="flex flex-wrap justify-center gap-1.5 bg-slate-950 p-1.5 border border-slate-800 rounded-xl">
+                {[
+                  { mode: 'free', label: lang === 'th' ? 'อิสระ' : 'Free' },
+                  { mode: '1:1', label: '1:1' },
+                  { mode: 'a4', label: 'A4' },
+                  { mode: '4:3', label: '4:3' },
+                  { mode: '16:9', label: '16:9' },
+                ].map((item) => (
+                  <button
+                    key={item.mode}
+                    type="button"
+                    onClick={() => handleRatioModeChange(item.mode as any)}
+                    className={`py-1.5 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      cropRatioMode === item.mode
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
             </div>
 
