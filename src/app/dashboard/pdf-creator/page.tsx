@@ -801,9 +801,13 @@ export default function PDFCreatorPage() {
 
         {/* Images Reordering and Upload Panel (Right 2 cols) */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Upload Area */}
-          {images.length > 0 ? (
-            <div className="relative group border-2 border-dashed border-slate-300 dark:border-slate-800 hover:border-indigo-500 rounded-xl p-3 bg-white dark:bg-slate-900/10 backdrop-blur transition-all duration-300">
+          {/* Images Layout */}
+          {images.length === 0 ? (
+            /* Beautiful Centered Upload Box (Empty State) */
+            <div className="max-w-md mx-auto bg-slate-50/50 dark:bg-slate-900/10 border border-slate-200 dark:border-slate-800 p-8 text-center rounded-2xl flex flex-col items-center gap-4 shadow-sm relative group overflow-hidden transition-all duration-300">
+              <div className="absolute -right-10 -top-10 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none group-hover:bg-indigo-500/25 transition-all" />
+              <div className="absolute -left-10 -bottom-10 w-24 h-24 bg-purple-500/10 rounded-full blur-xl pointer-events-none group-hover:bg-purple-500/25 transition-all" />
+              
               <input
                 type="file"
                 multiple
@@ -811,26 +815,11 @@ export default function PDFCreatorPage() {
                 onChange={handleFileUpload}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
               />
-              <div className="flex items-center justify-center gap-2">
-                <Upload className="h-5 w-5 text-indigo-500" />
-                <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
-                  {lang === 'th' ? 'อัปโหลดรูปภาพเพิ่ม...' : 'Upload more photos...'}
-                </span>
+              
+              <div className="p-3.5 bg-gradient-to-tr from-indigo-500 to-purple-500 text-white rounded-2xl shadow-lg shadow-indigo-600/20 group-hover:scale-105 transition-all duration-300">
+                <Upload className="h-6 w-6" />
               </div>
-            </div>
-          ) : (
-            <div className="relative group">
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleFileUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-              <div className="border-2 border-dashed border-slate-300 dark:border-slate-800 group-hover:border-indigo-500 rounded-2xl p-8 flex flex-col items-center justify-center text-center bg-white dark:bg-slate-900/20 backdrop-blur transition-all duration-300">
-                <div className="p-3.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-500 rounded-2xl mb-4 group-hover:scale-105 transition-all">
-                  <Upload className="h-7 w-7" />
-                </div>
+              <div>
                 <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
                   {t.choosePhotos}
                 </h4>
@@ -839,19 +828,33 @@ export default function PDFCreatorPage() {
                 </p>
               </div>
             </div>
-          )}
-
-          {/* Empty State */}
-          {images.length === 0 && (
-            <div className="bg-slate-50/50 dark:bg-slate-900/10 border border-slate-200 dark:border-slate-850 p-12 text-center text-slate-500 rounded-2xl flex flex-col items-center gap-3">
-              <FileImage className="h-10 w-10 text-slate-400" />
-              <p className="font-semibold text-sm">{t.noPages}</p>
-            </div>
-          )}
-
-          {/* Images Grid */}
-          {images.length > 0 && (
+          ) : (
+            /* Images Grid with Integrated Upload Card */
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {/* Sleek Grid Upload Card */}
+              <div className="bg-slate-50/50 dark:bg-slate-900/10 border-2 border-dashed border-slate-200 dark:border-slate-850 hover:border-indigo-500/80 rounded-xl overflow-hidden shadow-sm relative group transition-all duration-300 flex flex-col items-center justify-center text-center p-4 aspect-[3/4] cursor-pointer hover:shadow-indigo-500/5">
+                <div className="absolute -right-6 -top-6 w-16 h-16 bg-indigo-500/5 rounded-full blur-lg pointer-events-none group-hover:bg-indigo-500/15 transition-all" />
+                <div className="absolute -left-6 -bottom-6 w-16 h-16 bg-purple-500/5 rounded-full blur-lg pointer-events-none group-hover:bg-purple-500/15 transition-all" />
+                
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                
+                <div className="p-2.5 bg-gradient-to-tr from-indigo-500 to-purple-500 text-white rounded-lg mb-2 shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-all">
+                  <Upload className="h-4 w-4" />
+                </div>
+                <span className="font-extrabold text-[11px] text-slate-700 dark:text-slate-200 tracking-wide">
+                  {lang === 'th' ? 'เพิ่มรูปภาพ' : 'Add Photos'}
+                </span>
+                <span className="text-[9px] text-slate-400 dark:text-slate-550 mt-1 max-w-[100px] leading-tight select-none">
+                  {lang === 'th' ? 'เลือกไฟล์เพิ่ม' : 'Upload more'}
+                </span>
+              </div>
+
               {images.map((img, idx) => (
                 <div
                   key={img.id}
