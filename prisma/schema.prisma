@@ -1,20 +1,20 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 model Transaction {
   id       Int     @id @default(autoincrement())
   user_id  String  @map("user_id")
-  type     String  // "income" or "expense"
+  type     String
   amount   Float
   category String?
   note     String?
-  date     String  // Format: YYYY-MM-DD
+  date     String
 
   @@map("transactions")
 }
@@ -25,21 +25,21 @@ model Event {
   title      String
   event_date String  @map("event_date")
   event_time String? @map("event_time")
-  notified   Int     @default(0)
+  notified   Int?    @default(0)
 
   @@map("events")
 }
 
 model Slip {
-  id        Int     @id @default(autoincrement())
-  user_id   String  @map("user_id")
-  amount    Float?
-  bank      String?
-  ref       String?
-  datetime  String?
-  raw_text  String? @map("raw_text")
-  created   String
-  batch_id  String? @map("batch_id")
+  id       Int     @id @default(autoincrement())
+  user_id  String  @map("user_id")
+  amount   Float?
+  bank     String?
+  ref      String?
+  datetime String?
+  raw_text String? @map("raw_text")
+  created  String
+  batch_id String? @map("batch_id")
 
   @@map("slips")
 }
@@ -50,7 +50,7 @@ model UserProfile {
   age        String?
   job        String?
   location   String?
-  data_json  String  @default("{}") @map("data_json")
+  data_json  String? @default("{}") @map("data_json")
   updated_at String? @map("updated_at")
 
   @@map("user_profile")
