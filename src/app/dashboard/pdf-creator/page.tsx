@@ -43,12 +43,13 @@ export default function PdfCreatorPage() {
   const [editingItem, setEditingItem] = useState<ImageItem | null>(null)
   const [cropBox, setCropBox] = useState({ x: 10, y: 10, w: 80, h: 80 }) // percentages
   const [cropRotation, setCropRotation] = useState(0)
+  const [cropRatioMode, setCropRatioMode] = useState<'free' | '1:1' | 'a4' | '4:3' | '16:9'>('free')
   const editorImgRef = useRef<HTMLImageElement | null>(null)
   const cropBoxRef = useRef<HTMLDivElement | null>(null)
   const isDraggingCrop = useRef(false)
   const dragStartPos = useRef({ x: 0, y: 0 })
   const cropBoxStart = useRef({ x: 0, y: 0, w: 0, h: 0 })
-  const isResizingCrop = useRef<string | null>(null) // 'nw', 'ne', 'se', 'sw'
+  const isResizingCrop = useRef<string | null>(null) // 'nw', 'ne', 'se', 'sw', 'n', 's', 'e', 'w'
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -124,6 +125,7 @@ export default function PdfCreatorPage() {
   const openEditor = (item: ImageItem) => {
     setEditingItem(item)
     setCropRotation(item.rotation)
+    setCropRatioMode('free')
     setCropBox(
       item.cropData || { x: 10, y: 10, w: 80, h: 80 }
     )
@@ -132,6 +134,54 @@ export default function PdfCreatorPage() {
   // Image Rotation in Editor
   const rotateImage = () => {
     setCropRotation((prev) => (prev + 90) % 360)
+    setCropRatioMode('free')
+  }
+
+  // Handle Crop Ratio preset selection
+  const handleRatioModeChange = (mode: 'free' | '1:1' | 'a4' | '4:3' | '16:9') => {
+    setCropRatioMode(mode)
+    if (mode === 'free') return
+
+    const img = editorImgRef.current
+    if (!img) return
+    const is90or270 = cropRotation === 90 || cropRotation === 270
+    const imgW = img.naturalWidth
+    const imgH = img.naturalHeight
+    const activeImageRatio = is90or270 ? imgH / imgW : imgW / imgH
+
+    let targetRatio = 1
+    if (mode === '1:1') targetRatio = 1
+    else if (mode === '4:3') targetRatio = 4 / 3
+    else if (mode === '16:9') targetRatio = 16 / 9
+    else if (mode === 'a4') {
+      targetRatio = activeImageRatio > 1 ? 297 / 210 : 210 / 297
+    }
+
+    const pctRatio = targetRatio / activeImageRatio
+
+    let newW = 80
+    let newH = 80
+    
+    if (pctRatio > 1) {
+      newW = 80
+      newH = newW / pctRatio
+      if (newH > 80) {
+        newH = 80
+        newW = newH * pctRatio
+      }
+    } else {
+      newH = 80
+      newW = newH * pctRatio
+      if (newW > 80) {
+        newW = 80
+        newH = newW / pctRatio
+      }
+    }
+
+    const newX = (100 - newW) / 2
+    const newY = (100 - newH) / 2
+
+    setCropBox({ x: newX, y: newY, w: newW, h: newH })
   }
 
   // Draggable / Resizable Crop Box Logic (Touch & Mouse Support)
@@ -164,8 +214,18 @@ export default function PdfCreatorPage() {
       if (!container) return
       
       const containerRect = container.getBoundingClientRect()
-      const pctDeltaX = (deltaX / containerRect.width) * 100
-      const pctDeltaY = (deltaY / containerRect.height) * 100
+      
+      // Rotate delta coordinates based on cropRotation to align dragging with rotated image
+      const rad = (-cropRotation * Math.PI) / 180
+      const rotatedDeltaX = deltaX * Math.cos(rad) - deltaY * Math.sin(rad)
+      const rotatedDeltaY = deltaX * Math.sin(rad) + deltaY * Math.cos(rad)
+      
+      const is90or270 = cropRotation === 90 || cropRotation === 270
+      const imgWidthOnScreen = is90or270 ? containerRect.height : containerRect.width
+      const imgHeightOnScreen = is90or270 ? containerRect.width : containerRect.height
+      
+      const pctDeltaX = (rotatedDeltaX / imgWidthOnScreen) * 100
+      const pctDeltaY = (rotatedDeltaY / imgHeightOnScreen) * 100
       
       setCropBox((prev) => {
         let newX = prev.x
@@ -173,29 +233,119 @@ export default function PdfCreatorPage() {
         let newW = prev.w
         let newH = prev.h
         
+        const startL = cropBoxStart.current.x
+        const startR = cropBoxStart.current.x + cropBoxStart.current.w
+        const startT = cropBoxStart.current.y
+        const startB = cropBoxStart.current.y + cropBoxStart.current.h
+        
         if (isDraggingCrop.current) {
-          newX = Math.max(0, Math.min(100 - prev.w, cropBoxStart.current.x + pctDeltaX))
-          newY = Math.max(0, Math.min(100 - prev.h, cropBoxStart.current.y + pctDeltaY))
+          newX = Math.max(0, Math.min(100 - prev.w, startL + pctDeltaX))
+          newY = Math.max(0, Math.min(100 - prev.h, startT + pctDeltaY))
         } else if (isResizingCrop.current) {
           const corner = isResizingCrop.current
-          if (corner.includes('e')) {
-            newW = Math.max(10, Math.min(100 - prev.x, cropBoxStart.current.w + pctDeltaX))
-          }
-          if (corner.includes('w')) {
-            const potentialW = cropBoxStart.current.w - pctDeltaX
-            if (potentialW >= 10) {
-              newX = Math.max(0, cropBoxStart.current.x + pctDeltaX)
-              newW = cropBoxStart.current.w - (newX - cropBoxStart.current.x)
+          
+          if (cropRatioMode === 'free') {
+            let left = startL
+            let right = startR
+            let top = startT
+            let bottom = startB
+
+            if (corner.includes('w') || corner === 'w') {
+              left = Math.max(0, Math.min(right - 10, startL + pctDeltaX))
             }
-          }
-          if (corner.includes('s')) {
-            newH = Math.max(10, Math.min(100 - prev.y, cropBoxStart.current.h + pctDeltaY))
-          }
-          if (corner.includes('n')) {
-            const potentialH = cropBoxStart.current.h - pctDeltaY
-            if (potentialH >= 10) {
-              newY = Math.max(0, cropBoxStart.current.y + pctDeltaY)
-              newH = cropBoxStart.current.h - (newY - cropBoxStart.current.y)
+            if (corner.includes('e') || corner === 'e') {
+              right = Math.max(left + 10, Math.min(100, startR + pctDeltaX))
+            }
+            if (corner.includes('n') || corner === 'n') {
+              top = Math.max(0, Math.min(bottom - 10, startT + pctDeltaY))
+            }
+            if (corner.includes('s') || corner === 's') {
+              bottom = Math.max(top + 10, Math.min(100, startB + pctDeltaY))
+            }
+
+            newX = left
+            newY = top
+            newW = right - left
+            newH = bottom - top
+          } else {
+            // Locked aspect ratio mode: proportional resize from corner anchor
+            const img = editorImgRef.current
+            if (img) {
+              const imgW = img.naturalWidth
+              const imgH = img.naturalHeight
+              const activeImageRatio = is90or270 ? imgH / imgW : imgW / imgH
+
+              let targetRatio = 1
+              if (cropRatioMode === '1:1') targetRatio = 1
+              else if (cropRatioMode === '4:3') targetRatio = 4 / 3
+              else if (cropRatioMode === '16:9') targetRatio = 16 / 9
+              else if (cropRatioMode === 'a4') {
+                targetRatio = activeImageRatio > 1 ? 297 / 210 : 210 / 297
+              }
+
+              const pctRatio = targetRatio / activeImageRatio
+
+              if (corner === 'se') {
+                const potW = startR - startL + pctDeltaX
+                const maxW = 100 - startL
+                const maxH = 100 - startT
+                
+                newW = Math.max(10, Math.min(maxW, potW))
+                newH = newW / pctRatio
+                
+                if (newH > maxH) {
+                  newH = maxH
+                  newW = newH * pctRatio
+                }
+                
+                newX = startL
+                newY = startT
+              } else if (corner === 'sw') {
+                const potW = startR - startL - pctDeltaX
+                const maxW = startR
+                const maxH = 100 - startT
+                
+                newW = Math.max(10, Math.min(maxW, potW))
+                newH = newW / pctRatio
+                
+                if (newH > maxH) {
+                  newH = maxH
+                  newW = newH * pctRatio
+                }
+                
+                newX = startR - newW
+                newY = startT
+              } else if (corner === 'ne') {
+                const potW = startR - startL + pctDeltaX
+                const maxW = 100 - startL
+                const maxH = startB
+                
+                newW = Math.max(10, Math.min(maxW, potW))
+                newH = newW / pctRatio
+                
+                if (newH > maxH) {
+                  newH = maxH
+                  newW = newH * pctRatio
+                }
+                
+                newX = startL
+                newY = startB - newH
+              } else if (corner === 'nw') {
+                const potW = startR - startL - pctDeltaX
+                const maxW = startR
+                const maxH = startB
+                
+                newW = Math.max(10, Math.min(maxW, potW))
+                newH = newW / pctRatio
+                
+                if (newH > maxH) {
+                  newH = maxH
+                  newW = newH * pctRatio
+                }
+                
+                newX = startR - newW
+                newY = startB - newH
+              }
             }
           }
         }
@@ -220,7 +370,7 @@ export default function PdfCreatorPage() {
       window.removeEventListener('touchmove', handleMove)
       window.removeEventListener('touchend', handleUp)
     }
-  }, [editingItem])
+  }, [editingItem, cropRotation, cropRatioMode])
 
   // Save Crop & Rotate Edits
   const saveEdits = () => {
@@ -279,39 +429,62 @@ export default function PdfCreatorPage() {
     setGenerating(true)
     
     try {
-      // Initialize jsPDF
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4'
-      })
-      
+      // Preload all images and get their dimensions in parallel
+      const loadedImages = await Promise.all(
+        images.map((item) =>
+          new Promise<{ img: HTMLImageElement; width: number; height: number }>((resolve, reject) => {
+            const image = new Image()
+            image.src = item.editedSrc
+            image.onload = () => resolve({
+              img: image,
+              width: image.naturalWidth,
+              height: image.naturalHeight
+            })
+            image.onerror = (err) => reject(err)
+          })
+        )
+      )
+
       // Page size constants in mm
       const a4Width = 210
       const a4Height = 297
       const letterWidth = 215.9
       const letterHeight = 279.4
       
-      const marginSize = margin === 'none' ? 0 : margin === 'small' ? 10 : 20
+      const marginSize = pageSize === 'original' ? 0 : (margin === 'none' ? 0 : margin === 'small' ? 10 : 20)
 
-      for (let i = 0; i < images.length; i++) {
-        const item = images[i]
-        
-        // Add new page for subsequent items
-        if (i > 0) {
-          pdf.addPage()
+      // Determine the size of the first page
+      let firstPageW = a4Width
+      let firstPageH = a4Height
+      
+      if (pageSize === 'letter') {
+        firstPageW = letterWidth
+        firstPageH = letterHeight
+      } else if (pageSize === 'original' && loadedImages.length > 0) {
+        firstPageW = loadedImages[0].width * 0.264583
+        firstPageH = loadedImages[0].height * 0.264583
+      }
+      
+      // Determine orientation for non-original sizes
+      let firstOrientation: 'p' | 'l' = 'p'
+      if (pageSize !== 'original' && loadedImages.length > 0) {
+        const firstImg = loadedImages[0]
+        if (orientation === 'landscape' || (orientation === 'auto' && firstImg.width > firstImg.height)) {
+          firstOrientation = 'l'
+          const temp = firstPageW
+          firstPageW = firstPageH
+          firstPageH = temp
         }
-        
-        // Get image dimensions
-        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const image = new Image()
-          image.src = item.editedSrc
-          image.onload = () => resolve(image)
-          image.onerror = (err) => reject(err)
-        })
-        
-        const imgWidth = img.naturalWidth
-        const imgHeight = img.naturalHeight
+      }
+      
+      const pdf = new jsPDF({
+        orientation: firstOrientation,
+        unit: 'mm',
+        format: pageSize === 'original' ? [firstPageW, firstPageH] : pageSize
+      })
+
+      for (let i = 0; i < loadedImages.length; i++) {
+        const { img, width: imgWidth, height: imgHeight } = loadedImages[i]
         
         // Determine PDF page width and height
         let pageW = a4Width
@@ -321,15 +494,8 @@ export default function PdfCreatorPage() {
           pageW = letterWidth
           pageH = letterHeight
         } else if (pageSize === 'original') {
-          // Convert pixels to mm roughly (1 pixel = 0.264583 mm)
           pageW = imgWidth * 0.264583
           pageH = imgHeight * 0.264583
-          // Set custom page size
-          pdf.setPage(i + 1)
-          // @ts-ignore
-          pdf.internal.pageSize.width = pageW
-          // @ts-ignore
-          pdf.internal.pageSize.height = pageH
         }
         
         // Determine orientation
@@ -345,13 +511,13 @@ export default function PdfCreatorPage() {
           pageH = temp
         }
         
-        // Apply orientation to PDF page
-        if (pageSize !== 'original') {
-          pdf.setPage(i + 1)
-          // @ts-ignore
-          pdf.internal.pageSize.width = pageW
-          // @ts-ignore
-          pdf.internal.pageSize.height = pageH
+        // Add new page for subsequent items
+        if (i > 0) {
+          if (pageSize === 'original') {
+            pdf.addPage([pageW, pageH], 'p')
+          } else {
+            pdf.addPage(pageSize, finalOrientation === 'landscape' ? 'l' : 'p')
+          }
         }
 
         // Calculate printable area
@@ -366,10 +532,8 @@ export default function PdfCreatorPage() {
         let drawHeight = printableHeight
         
         if (imgRatio > printableRatio) {
-          // Image is wider than printable area
           drawHeight = printableWidth / imgRatio
         } else {
-          // Image is taller than printable area
           drawWidth = printableHeight * imgRatio
         }
         
@@ -377,8 +541,9 @@ export default function PdfCreatorPage() {
         const xOffset = marginSize + (printableWidth - drawWidth) / 2
         const yOffset = marginSize + (printableHeight - drawHeight) / 2
         
+        pdf.setPage(i + 1)
         pdf.addImage(
-          item.editedSrc,
+          images[i].editedSrc,
           'JPEG',
           xOffset,
           yOffset,
@@ -556,14 +721,14 @@ export default function PdfCreatorPage() {
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { value: 'a4', label: 'A4' },
+                  { value: 'a4', label: 'ขนาดมาตรฐาน A4' },
                   { value: 'letter', label: 'Letter' },
-                  { value: 'original', label: 'ขนาดจริง' }
+                  { value: 'original', label: 'อัตราส่วนดั้งเดิม' }
                 ].map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setPageSize(opt.value as any)}
-                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                    className={`py-2 px-1 text-xs font-semibold rounded-xl border transition-all ${
                       pageSize === opt.value
                         ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
                         : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
@@ -604,18 +769,18 @@ export default function PdfCreatorPage() {
             {/* Margin Selection */}
             <div className="space-y-2">
               <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
-                ระยะขอบกระดาษ (Margins)
+                ระยะขอบหน้ากระดาษ (Margins)
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { value: 'none', label: 'ไม่มีขอบ' },
-                  { value: 'small', label: 'ขอบแคบ' },
-                  { value: 'medium', label: 'ขอบกลาง' }
+                  { value: 'none', label: 'ไม่มี (เต็ม)' },
+                  { value: 'small', label: 'ขนาดเล็ก (10 มม.)' },
+                  { value: 'medium', label: 'ขนาดกลาง (20 มม.)' }
                 ].map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setMargin(opt.value as any)}
-                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                    className={`py-2 px-1 text-xs font-semibold rounded-xl border transition-all ${
                       margin === opt.value
                         ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
                         : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
@@ -651,14 +816,14 @@ export default function PdfCreatorPage() {
 
       {/* ── Visual Canvas Editor Modal ── */}
       {editingItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[90vh]">
             
             {/* Modal Header */}
-            <div className="px-6 py-4 bg-slate-950/40 border-b border-slate-850 flex justify-between items-center">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/40 border-b border-slate-850 flex justify-between items-center">
               <div>
                 <h3 className="font-bold text-white text-base">ครอบตัด & หมุนรูปภาพ</h3>
-                <p className="text-xs text-slate-400">ใช้นิ้วลากขอบครอบเพื่อตัด และหมุนภาพให้ตรงทิศทาง</p>
+                <p className="text-xs text-slate-405">ปรับขอบครอบตัดตามสัดส่วน หรือลากและหมุนได้ตามสะดวก</p>
               </div>
               <button 
                 onClick={() => setEditingItem(null)}
@@ -669,9 +834,9 @@ export default function PdfCreatorPage() {
             </div>
 
             {/* Modal Canvas Working Area */}
-            <div className="flex-1 bg-slate-950 p-6 flex items-center justify-center overflow-auto min-h-[300px] relative">
+            <div className="flex-1 bg-slate-950 p-3 sm:p-6 flex items-center justify-center overflow-hidden min-h-[220px] sm:min-h-[320px] relative">
               <div 
-                className="relative max-w-full max-h-[50vh] flex items-center justify-center select-none"
+                className="relative max-w-full max-h-[38vh] sm:max-h-[50vh] flex items-center justify-center select-none"
                 style={{ transform: `rotate(${cropRotation}deg)`, transition: 'transform 0.2s ease-out' }}
               >
                 {/* Image under edit */}
@@ -680,7 +845,7 @@ export default function PdfCreatorPage() {
                   ref={editorImgRef}
                   src={editingItem.src}
                   alt="Editor Mode"
-                  className="max-w-full max-h-[50vh] object-contain pointer-events-none rounded-lg"
+                  className="max-w-full max-h-[38vh] sm:max-h-[50vh] object-contain pointer-events-none rounded-lg"
                 />
 
                 {/* Draggable Crop Frame */}
@@ -696,18 +861,42 @@ export default function PdfCreatorPage() {
                     height: `${cropBox.h}%`
                   }}
                 >
-                  {/* Resize Handles for Crop Box */}
+                  {/* Resize Corner Handles for Crop Box (Always visible) */}
                   {['nw', 'ne', 'se', 'sw'].map((corner) => (
                     <div
                       key={corner}
                       onMouseDown={(e) => handleCropMouseDown(e, corner)}
                       onTouchStart={(e) => handleCropMouseDown(e, corner)}
-                      className={`absolute w-4 h-4 bg-emerald-500 border border-white rounded-full -translate-x-1/2 -translate-y-1/2 cursor-crosshair z-20 ${
+                      className={`absolute w-10 h-10 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-30 cursor-pointer ${
                         corner === 'nw' ? 'top-0 left-0' :
                         corner === 'ne' ? 'top-0 left-full' :
-                        corner === 'se' ? 'top-full left-full' : 'top-full left-0'
+                        corner === 'se' ? 'top-full left-full' :
+                        'top-full left-0'
                       }`}
-                    />
+                    >
+                      <div className="w-3.5 h-3.5 bg-emerald-500 border border-white rounded-full shadow-md transition-transform active:scale-125" />
+                    </div>
+                  ))}
+
+                  {/* Resize Edge Handles for Crop Box (Only in Free Mode) */}
+                  {cropRatioMode === 'free' && ['n', 's', 'e', 'w'].map((edge) => (
+                    <div
+                      key={edge}
+                      onMouseDown={(e) => handleCropMouseDown(e, edge)}
+                      onTouchStart={(e) => handleCropMouseDown(e, edge)}
+                      className={`absolute w-10 h-10 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-30 cursor-pointer ${
+                        edge === 'n' ? 'top-0 left-1/2' :
+                        edge === 's' ? 'top-full left-1/2' :
+                        edge === 'e' ? 'top-1/2 left-full' :
+                        'top-1/2 left-0'
+                      }`}
+                    >
+                      {edge === 'n' || edge === 's' ? (
+                        <div className="w-6 h-1.5 bg-emerald-500 border border-white rounded-full shadow-md transition-transform active:scale-125" />
+                      ) : (
+                        <div className="w-1.5 h-6 bg-emerald-500 border border-white rounded-full shadow-md transition-transform active:scale-125" />
+                      )}
+                    </div>
                   ))}
                   
                   {/* Aspect Helper Center indicator */}
@@ -723,11 +912,39 @@ export default function PdfCreatorPage() {
               </div>
             </div>
 
+            {/* Aspect Ratio Presets Selector */}
+            <div className="px-4 py-3 sm:px-6 bg-slate-950/30 border-t border-slate-850/80 flex flex-col gap-2 shrink-0">
+              <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">
+                สัดส่วนการครอบตัด (Aspect Ratio)
+              </label>
+              <div className="flex flex-wrap gap-1.5 justify-center">
+                {[
+                  { value: 'free', label: 'อิสระ' },
+                  { value: '1:1', label: '1:1' },
+                  { value: 'a4', label: 'A4' },
+                  { value: '4:3', label: '4:3' },
+                  { value: '16:9', label: '16:9' }
+                ].map((ratio) => (
+                  <button
+                    key={ratio.value}
+                    onClick={() => handleRatioModeChange(ratio.value as any)}
+                    className={`px-3.5 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      cropRatioMode === ratio.value
+                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400 shadow-md shadow-emerald-950/20'
+                        : 'bg-slate-950/45 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {ratio.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Modal Bottom Actions */}
-            <div className="px-6 py-4 bg-slate-950/40 border-t border-slate-850 flex justify-between items-center gap-3">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-950/40 border-t border-slate-850 flex justify-between items-center gap-3 shrink-0">
               <button
                 onClick={rotateImage}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all"
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all active:scale-95"
               >
                 <RotateCw className="h-4 w-4" />
                 <span>หมุนภาพ 90°</span>
@@ -736,13 +953,13 @@ export default function PdfCreatorPage() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setEditingItem(null)}
-                  className="px-4 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-sm font-semibold rounded-xl transition-all"
+                  className="px-4 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-sm font-semibold rounded-xl transition-all active:scale-95"
                 >
                   ยกเลิก
                 </button>
                 <button
                   onClick={saveEdits}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-md transition-all"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-md transition-all active:scale-95"
                 >
                   <Check className="h-4 w-4" />
                   บันทึกการแก้ไข

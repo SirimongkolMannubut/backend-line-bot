@@ -18,7 +18,7 @@ export default async function DashboardLayout({
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-300">
       <DashboardNav />
-      <main className="flex-1 w-full overflow-x-hidden p-4 md:p-8 lg:p-10">
+      <main className="flex-1 w-full overflow-x-hidden p-4 pb-24 md:p-8 lg:p-10">
         <div className="max-w-7xl mx-auto space-y-8">
           {children}
         </div>

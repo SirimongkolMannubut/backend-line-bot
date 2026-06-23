@@ -131,34 +131,59 @@ export default function DashboardNav() {
         <SidebarContent />
       </aside>
 
-      {/* Mobile Top Navbar */}
-      <div className="lg:hidden flex items-center justify-between bg-slate-900 text-slate-100 px-6 py-4 sticky top-0 z-40 border-b border-slate-800">
+      {/* Mobile Top Header (Minimal) */}
+      <div className="lg:hidden flex items-center justify-between bg-slate-900 text-slate-100 px-5 py-3 sticky top-0 z-40 border-b border-slate-800">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-6 w-6 text-indigo-500" />
-          <span className="font-bold text-lg">LouisAI</span>
+          <Sparkles className="h-5 w-5 text-indigo-500" />
+          <span className="font-bold text-base">LouisAI</span>
         </div>
-        <button
-          onClick={() => setMobileOpen(!mobileOpen)}
-          className="p-2 text-slate-400 hover:text-slate-100 bg-slate-800 rounded-xl"
-        >
-          {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-lg border border-slate-800 bg-slate-800/40 text-slate-400"
+            title="Toggle Theme"
+          >
+            {theme === 'dark' ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            onClick={() => signOut({ callbackUrl: '/' })}
+            className="p-1.5 rounded-lg border border-red-950 bg-red-950/10 text-red-400"
+            title="Sign Out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Mobile Drawer Overlay */}
-      {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setMobileOpen(false)}
-          />
-          {/* Sidebar Drawer */}
-          <div className="relative w-64 max-w-xs flex-1 flex flex-col bg-slate-900 h-full animate-slide-in">
-            <SidebarContent />
-          </div>
-        </div>
-      )}
+      {/* Mobile Bottom Tab Navigation */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 flex justify-around py-2 px-2 pb-safe shadow-[0_-4px_12px_rgba(0,0,0,0.15)]">
+        {navItems.map((item) => {
+          const isActive = pathname === item.href
+          const Icon = item.icon
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 transition-all duration-200 ${
+                isActive ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Icon className={`h-5.5 w-5.5 ${isActive ? 'scale-110' : ''}`} />
+              <span className="text-[9px] font-bold tracking-tight">
+                {item.label === 'Dashboard' ? 'Home' :
+                 item.label === 'Ledger' ? 'Ledger' :
+                 item.label === 'OCR Slips' ? 'Slips' :
+                 item.label === 'PDF Creator' ? 'PDF' :
+                 item.label === 'Calendar' ? 'Reminders' : 'Profile'}
+              </span>
+            </Link>
+          )
+        })}
+      </nav>
     </>
   )
 }
