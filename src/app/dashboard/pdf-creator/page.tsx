@@ -1,0 +1,724 @@
+'use client'
+
+import React, { useState, useRef, useEffect } from 'react'
+import {
+  Upload,
+  ArrowLeft,
+  ArrowRight,
+  Trash2,
+  Crop,
+  RotateCw,
+  FileDown,
+  Check,
+  X,
+  FileImage,
+  Layers,
+  Settings,
+  Maximize,
+} from 'lucide-react'
+import { jsPDF } from 'jspdf'
+
+interface ImagePage {
+  id: string
+  name: string
+  src: string        // DataURL of the current version (cropped/rotated)
+  originalSrc: string // Original uploaded DataURL
+  rotation: number   // 0, 90, 180, 270
+  cropPercent: { x: number; y: number; w: number; h: number } // 0-100 percentage values
+}
+
+export default function PDFCreatorPage() {
+  const [images, setImages] = useState<ImagePage[]>([])
+  const [editingImage, setEditingImage] = useState<ImagePage | null>(null)
+  
+  // Editor Modal Local State
+  const [editorRotation, setEditorRotation] = useState(0)
+  const [editorCrop, setEditorCrop] = useState({ x: 10, y: 10, w: 80, h: 80 })
+  
+  // PDF Options
+  const [pageSize, setPageSize] = useState<'a4' | 'original'>('a4')
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait')
+  const [margin, setMargin] = useState<0 | 10>(0)
+  const [pdfFileName, setPdfFileName] = useState('LouisAI_Document')
+  const [generating, setGenerating] = useState(false)
+
+  // Drag and Drop Dragged Item Index
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+
+  // File Upload Handler
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return
+    const filesArray = Array.from(e.target.files)
+
+    filesArray.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const newImg: ImagePage = {
+            id: Math.random().toString(36).substring(2, 9),
+            name: file.name,
+            src: event.target.result as string,
+            originalSrc: event.target.result as string,
+            rotation: 0,
+            cropPercent: { x: 0, y: 0, w: 100, h: 100 },
+          }
+          setImages((prev) => [...prev, newImg])
+        }
+      }
+      reader.readAsDataURL(file)
+    })
+    e.target.value = '' // Reset input
+  }
+
+  // Reordering Handlers (Desktop: Drag & Drop)
+  const handleDragStart = (idx: number) => {
+    setDraggedIndex(idx)
+  }
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault()
+  }
+
+  const handleDrop = (idx: number) => {
+    if (draggedIndex === null || draggedIndex === idx) return
+    const updated = [...images]
+    const [draggedItem] = updated.splice(draggedIndex, 1)
+    updated.splice(idx, 0, draggedItem)
+    setImages(updated)
+    setDraggedIndex(null)
+  }
+
+  // Reordering Handlers (Mobile: Shift Buttons)
+  const moveLeft = (idx: number) => {
+    if (idx === 0) return
+    const updated = [...images]
+    const temp = updated[idx]
+    updated[idx] = updated[idx - 1]
+    updated[idx - 1] = temp
+    setImages(updated)
+  }
+
+  const moveRight = (idx: number) => {
+    if (idx === images.length - 1) return
+    const updated = [...images]
+    const temp = updated[idx]
+    updated[idx] = updated[idx + 1]
+    updated[idx + 1] = temp
+    setImages(updated)
+  }
+
+  // Delete Handler
+  const deleteImage = (id: string) => {
+    setImages((prev) => prev.filter((img) => img.id !== id))
+  }
+
+  // Open Crop/Rotate Modal
+  const openEditor = (img: ImagePage) => {
+    setEditingImage(img)
+    setEditorRotation(img.rotation)
+    setEditorCrop({ ...img.cropPercent })
+  }
+
+  // Crop Box Editor Dragging Logic (Touch & Mouse friendly)
+  const imageContainerRef = useRef<HTMLDivElement>(null)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const [activeHandle, setActiveHandle] = useState<string | null>(null) // 'tl', 'tr', 'bl', 'br', 'move'
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, handle: string) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setActiveHandle(handle)
+    setDragStart({ x: e.clientX, y: e.clientY })
+    if (e.currentTarget.setPointerCapture) {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
+  }
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStart || !activeHandle || !imageContainerRef.current) return
+    e.preventDefault()
+
+    const container = imageContainerRef.current.getBoundingClientRect()
+    const dx = ((e.clientX - dragStart.x) / container.width) * 100
+    const dy = ((e.clientY - dragStart.y) / container.height) * 100
+
+    setEditorCrop((prev) => {
+      let { x, y, w, h } = prev
+
+      if (activeHandle === 'move') {
+        x = Math.max(0, Math.min(100 - w, x + dx))
+        y = Math.max(0, Math.min(100 - h, y + dy))
+      } else if (activeHandle === 'tl') {
+        const newX = Math.max(0, Math.min(x + w - 10, x + dx))
+        const newY = Math.max(0, Math.min(y + h - 10, y + dy))
+        w = w - (newX - x)
+        h = h - (newY - y)
+        x = newX
+        y = newY
+      } else if (activeHandle === 'tr') {
+        w = Math.max(10, Math.min(100 - x, w + dx))
+        const newY = Math.max(0, Math.min(y + h - 10, y + dy))
+        h = h - (newY - y)
+        y = newY
+      } else if (activeHandle === 'bl') {
+        const newX = Math.max(0, Math.min(x + w - 10, x + dx))
+        w = w - (newX - x)
+        x = newX
+        h = Math.max(10, Math.min(100 - y, h + dy))
+      } else if (activeHandle === 'br') {
+        w = Math.max(10, Math.min(100 - x, w + dx))
+        h = Math.max(10, Math.min(100 - y, h + dy))
+      }
+
+      return { x, y, w, h }
+    })
+
+    setDragStart({ x: e.clientX, y: e.clientY })
+  }
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setActiveHandle(null)
+    setDragStart(null)
+    if (e.currentTarget.releasePointerCapture) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+  }
+
+  // Rotate Handler
+  const handleRotate = () => {
+    setEditorRotation((prev) => (prev + 90) % 360)
+  }
+
+  // Apply Changes (Process Canvas Cropping and Rotation)
+  const saveEditedImage = () => {
+    if (!editingImage) return
+
+    const img = new Image()
+    img.src = editingImage.originalSrc
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      // Determine dimensions based on rotation
+      const is90or270 = editorRotation === 90 || editorRotation === 270
+      const width = is90or270 ? img.height : img.width
+      const height = is90or270 ? img.width : img.height
+
+      // Extract Crop Pixels relative to rotated image bounds
+      const cropX = (editorCrop.x / 100) * width
+      const cropY = (editorCrop.y / 100) * height
+      const cropW = (editorCrop.w / 100) * width
+      const cropH = (editorCrop.h / 100) * height
+
+      // Set Canvas to cropped output size
+      canvas.width = cropW
+      canvas.height = cropH
+
+      // Transform context to rotate about cropped origin
+      ctx.translate(canvas.width / 2, canvas.height / 2)
+      ctx.rotate((editorRotation * Math.PI) / 180)
+
+      // Draw rotated image centered, accounting for translation
+      // (We map the un-rotated image coordinates back to original size)
+      if (editorRotation === 0) {
+        ctx.drawImage(
+          img,
+          cropX,
+          cropY,
+          cropW,
+          cropH,
+          -canvas.width / 2,
+          -canvas.height / 2,
+          canvas.width / 2 * 2,
+          canvas.height / 2 * 2
+        )
+      } else if (editorRotation === 90) {
+        // Map rotated crop area back to original source img coordinates
+        const srcX = (editorCrop.y / 100) * img.width
+        const srcY = (1 - (editorCrop.x + editorCrop.w) / 100) * img.height
+        const srcW = (editorCrop.h / 100) * img.width
+        const srcH = (editorCrop.w / 100) * img.height
+
+        ctx.drawImage(
+          img,
+          srcX,
+          srcY,
+          srcW,
+          srcH,
+          -canvas.height / 2,
+          -canvas.width / 2,
+          canvas.height,
+          canvas.width
+        )
+      } else if (editorRotation === 180) {
+        const srcX = (1 - (editorCrop.x + editorCrop.w) / 100) * img.width
+        const srcY = (1 - (editorCrop.y + editorCrop.h) / 100) * img.height
+        const srcW = (editorCrop.w / 100) * img.width
+        const srcH = (editorCrop.h / 100) * img.height
+
+        ctx.drawImage(
+          img,
+          srcX,
+          srcY,
+          srcW,
+          srcH,
+          -canvas.width / 2,
+          -canvas.height / 2,
+          canvas.width,
+          canvas.height
+        )
+      } else if (editorRotation === 270) {
+        const srcX = (1 - (editorCrop.y + editorCrop.h) / 100) * img.width
+        const srcY = (editorCrop.x / 100) * img.height
+        const srcW = (editorCrop.h / 100) * img.width
+        const srcH = (editorCrop.w / 100) * img.height
+
+        ctx.drawImage(
+          img,
+          srcX,
+          srcY,
+          srcW,
+          srcH,
+          -canvas.height / 2,
+          -canvas.width / 2,
+          canvas.height,
+          canvas.width
+        )
+      }
+
+      const croppedSrc = canvas.toDataURL('image/jpeg', 0.92)
+
+      setImages((prev) =>
+        prev.map((item) =>
+          item.id === editingImage.id
+            ? {
+                ...item,
+                src: croppedSrc,
+                rotation: editorRotation,
+                cropPercent: editorCrop,
+              }
+            : item
+        )
+      )
+      setEditingImage(null)
+    }
+  }
+
+  // Generate and Download PDF using jsPDF
+  const generatePDF = async () => {
+    if (images.length === 0) return
+    setGenerating(true)
+
+    try {
+      const pdf = new jsPDF({
+        orientation: orientation,
+        unit: 'mm',
+        format: pageSize === 'a4' ? 'a4' : 'a4', // A4 fallback
+      })
+
+      for (let i = 0; i < images.length; i++) {
+        if (i > 0) pdf.addPage()
+
+        const imgData = images[i].src
+        
+        // Wait to load dimensions
+        await new Promise<void>((resolve) => {
+          const img = new Image()
+          img.src = imgData
+          img.onload = () => {
+            const pageW = orientation === 'portrait' ? 210 : 297
+            const pageH = orientation === 'portrait' ? 297 : 210
+            const m = margin
+
+            const availW = pageW - m * 2
+            const availH = pageH - m * 2
+
+            // Fit image into available page space preserving aspect ratio
+            const imgRatio = img.width / img.height
+            const availRatio = availW / availH
+
+            let destW = availW
+            let destH = availH
+
+            if (pageSize === 'original') {
+              // Custom document bounds matching original ratio inside margins
+              if (imgRatio > availRatio) {
+                destH = availW / imgRatio
+              } else {
+                destW = availH * imgRatio
+              }
+            } else {
+              // Exact A4 boundaries fit
+              if (imgRatio > availRatio) {
+                destH = availW / imgRatio
+              } else {
+                destW = availH * imgRatio
+              }
+            }
+
+            const x = m + (availW - destW) / 2
+            const y = m + (availH - destH) / 2
+
+            pdf.addImage(imgData, 'JPEG', x, y, destW, destH)
+            resolve()
+          }
+        })
+      }
+
+      pdf.save(`${pdfFileName.trim() || 'LouisAI_Document'}.pdf`)
+    } catch (e) {
+      console.error(e)
+      alert('Failed to generate PDF. Please try again.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Page Title Header */}
+      <div>
+        <h2 className="text-3xl font-extrabold tracking-tight">PDF Creator</h2>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Compile multiple photos/scans into a clean PDF. Edit, crop, reorder pages.
+        </p>
+      </div>
+
+      {/* Main Grid: Options on Left, Images List on Right */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* PDF Configuration Options Panel */}
+        <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-sm space-y-6">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800/80">
+            <Settings className="h-5 w-5 text-indigo-500" />
+            <h3 className="font-extrabold text-base">PDF Settings</h3>
+          </div>
+
+          <div className="space-y-4">
+            {/* Filename Input */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                File Name
+              </label>
+              <input
+                type="text"
+                value={pdfFileName}
+                onChange={(e) => setPdfFileName(e.target.value)}
+                className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 text-sm font-medium"
+              />
+            </div>
+
+            {/* Page Size Options */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                Page Size
+              </label>
+              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
+                <button
+                  onClick={() => setPageSize('a4')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    pageSize === 'a4'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Standard A4
+                </button>
+                <button
+                  onClick={() => setPageSize('original')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    pageSize === 'original'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Original Ratio
+                </button>
+              </div>
+            </div>
+
+            {/* Page Orientation */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                Orientation
+              </label>
+              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
+                <button
+                  onClick={() => setOrientation('portrait')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    orientation === 'portrait'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Portrait
+                </button>
+                <button
+                  onClick={() => setOrientation('landscape')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    orientation === 'landscape'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Landscape
+                </button>
+              </div>
+            </div>
+
+            {/* Margins */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                Page Margins
+              </label>
+              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
+                <button
+                  onClick={() => setMargin(0)}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    margin === 0
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  None (Full)
+                </button>
+                <button
+                  onClick={() => setMargin(10)}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                    margin === 10
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Small (10mm)
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Trigger */}
+          <button
+            onClick={generatePDF}
+            disabled={images.length === 0 || generating}
+            className="w-full flex items-center justify-center gap-2 py-3 px-5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] cursor-pointer"
+          >
+            <FileDown className="h-5 w-5" />
+            {generating ? 'Compiling PDF...' : `Generate PDF (${images.length} pages)`}
+          </button>
+        </div>
+
+        {/* Images Reordering and Upload Panel (Right 2 cols) */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Upload Area */}
+          <div className="relative group">
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+            />
+            <div className="border-2 border-dashed border-slate-300 dark:border-slate-800 group-hover:border-indigo-500 rounded-2xl p-8 flex flex-col items-center justify-center text-center bg-white dark:bg-slate-900/20 backdrop-blur transition-all duration-300">
+              <div className="p-3.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-500 rounded-2xl mb-4 group-hover:scale-105 transition-all">
+                <Upload className="h-7 w-7" />
+              </div>
+              <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
+                Choose / Drop Photos
+              </h4>
+              <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
+                Supports multiple JPG, PNG image uploads. Touch friendly.
+              </p>
+            </div>
+          </div>
+
+          {/* Empty State */}
+          {images.length === 0 && (
+            <div className="bg-slate-50/50 dark:bg-slate-900/10 border border-slate-200 dark:border-slate-850 p-12 text-center text-slate-500 rounded-2xl flex flex-col items-center gap-3">
+              <FileImage className="h-10 w-10 text-slate-400" />
+              <p className="font-semibold text-sm">No pages uploaded yet</p>
+            </div>
+          )}
+
+          {/* Images Grid */}
+          {images.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {images.map((img, idx) => (
+                <div
+                  key={img.id}
+                  draggable
+                  onDragStart={() => handleDragStart(idx)}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={() => handleDrop(idx)}
+                  className={`bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-850 rounded-xl overflow-hidden shadow-sm relative group transition-all cursor-move ${
+                    draggedIndex === idx ? 'opacity-40 border-indigo-500 border-2' : ''
+                  }`}
+                >
+                  {/* Page index badge */}
+                  <span className="absolute top-2.5 left-2.5 z-10 w-6 h-6 rounded-full bg-slate-950/80 backdrop-blur border border-slate-800 text-white flex items-center justify-center font-mono text-xs font-bold">
+                    {idx + 1}
+                  </span>
+
+                  {/* Thumbnail Image Container */}
+                  <div className="aspect-[3/4] bg-slate-950 flex items-center justify-center relative overflow-hidden select-none">
+                    <img
+                      src={img.src}
+                      alt={img.name}
+                      className="max-w-full max-h-full object-contain pointer-events-none"
+                    />
+                  </div>
+
+                  {/* Desktop Action Handles & Mobile shifting */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-850 flex items-center justify-between gap-1.5">
+                    {/* Shift Left */}
+                    <button
+                      onClick={() => moveLeft(idx)}
+                      disabled={idx === 0}
+                      className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
+                      title="Move Left"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+
+                    {/* Editor Trigger */}
+                    <button
+                      onClick={() => openEditor(img)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-1 px-2.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-[11px] rounded-lg transition-all"
+                      title="Edit / Crop"
+                    >
+                      <Crop className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+
+                    {/* Delete */}
+                    <button
+                      onClick={() => deleteImage(img.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-500 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
+                      title="Delete Page"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+
+                    {/* Shift Right */}
+                    <button
+                      onClick={() => moveRight(idx)}
+                      disabled={idx === images.length - 1}
+                      className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
+                      title="Move Right"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Image Editor Modal (Touch crop & Rotate) */}
+      {editingImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setEditingImage(null)} />
+
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-xl rounded-2xl overflow-hidden shadow-2xl relative z-10 p-6 space-y-6 text-slate-100 animate-scale-in">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <h3 className="font-extrabold text-lg flex items-center gap-2">
+                <Crop className="h-5.5 w-5.5 text-indigo-500" />
+                Image Editor & Cropper
+              </h3>
+              <button
+                onClick={() => setEditingImage(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-100 bg-slate-800 rounded-lg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Editor workspace */}
+            <div className="flex flex-col items-center justify-center bg-slate-950 p-4 rounded-xl border border-slate-850 min-h-[300px] max-h-[420px] overflow-hidden relative select-none">
+              <div
+                ref={imageContainerRef}
+                className="relative max-h-full max-w-full"
+                style={{
+                  transform: `rotate(${editorRotation}deg)`,
+                  transition: 'transform 0.25s ease',
+                }}
+              >
+                <img
+                  src={editingImage.originalSrc}
+                  alt="Original"
+                  className="max-h-[300px] max-w-full object-contain pointer-events-none select-none"
+                />
+
+                {/* Draggable Cropping Frame box overlay */}
+                <div
+                  onPointerMove={handlePointerMove}
+                  className="absolute border-2 border-dashed border-indigo-400 bg-indigo-500/10 cursor-move"
+                  style={{
+                    left: `${editorCrop.x}%`,
+                    top: `${editorCrop.y}%`,
+                    width: `${editorCrop.w}%`,
+                    height: `${editorCrop.h}%`,
+                  }}
+                  onPointerDown={(e) => handlePointerDown(e, 'move')}
+                  onPointerUp={handlePointerUp}
+                >
+                  {/* Resize Drag Handles at 4 Corners */}
+                  <div
+                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none"
+                    onPointerDown={(e) => handlePointerDown(e, 'tl')}
+                    onPointerUp={handlePointerUp}
+                  />
+                  <div
+                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none"
+                    onPointerDown={(e) => handlePointerDown(e, 'tr')}
+                    onPointerUp={handlePointerUp}
+                  />
+                  <div
+                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none"
+                    onPointerDown={(e) => handlePointerDown(e, 'bl')}
+                    onPointerUp={handlePointerUp}
+                  />
+                  <div
+                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none"
+                    onPointerDown={(e) => handlePointerDown(e, 'br')}
+                    onPointerUp={handlePointerUp}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Actions Footer */}
+            <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-slate-800 items-center justify-between">
+              {/* Tooltip instructions */}
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                <Maximize className="h-3.5 w-3.5" />
+                Drag crop corners to adjust page bounds
+              </span>
+
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleRotate}
+                  className="flex-1 sm:flex-initial py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-slate-100 text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5"
+                >
+                  <RotateCw className="h-4.5 w-4.5" />
+                  Rotate 90°
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEditedImage}
+                  className="flex-1 sm:flex-initial py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Check className="h-4.5 w-4.5" />
+                  Apply Crop
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
