@@ -1,1108 +1,751 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import {
-  Upload,
-  ArrowLeft,
-  ArrowRight,
-  Trash2,
-  Crop,
-  RotateCw,
-  FileDown,
-  Check,
-  X,
-  FileImage,
-  Layers,
-  Settings,
-  Maximize,
+import { 
+  Upload, 
+  FileText, 
+  Trash2, 
+  RotateCw, 
+  Crop, 
+  ArrowUp, 
+  ArrowDown, 
+  Download, 
+  Plus, 
+  Check, 
+  X, 
+  Info
 } from 'lucide-react'
-import { jsPDF } from 'jspdf'
+import jsPDF from 'jspdf'
 
-interface ImagePage {
+interface ImageItem {
   id: string
   name: string
-  src: string        // DataURL of the current version (cropped/rotated)
-  originalSrc: string // Original uploaded DataURL
+  src: string        // original base64 or objectUrl
+  editedSrc: string  // cropped / rotated base64 or objectUrl
   rotation: number   // 0, 90, 180, 270
-  cropPercent: { x: number; y: number; w: number; h: number } // 0-100 percentage values
-}
-
-const dict = {
-  th: {
-    title: 'เครื่องมือสร้าง PDF',
-    subtitle: 'รวมรูปภาพ/ภาพสแกนหลายรูปเป็นไฟล์ PDF จัดเรียง ครอปตัด และหมุนภาพได้ตามต้องการ',
-    settings: 'ตั้งค่า PDF',
-    fileName: 'ชื่อไฟล์',
-    pageSize: 'ขนาดหน้ากระดาษ',
-    standardA4: 'ขนาดมาตรฐาน A4',
-    originalRatio: 'ขนาดตามรูปต้นฉบับ',
-    orientation: 'การวางแนวกระดาษ',
-    portrait: 'แนวตั้ง',
-    landscape: 'แนวนอน',
-    margins: 'ระยะขอบกระดาษ',
-    marginNone: 'ไม่มีขอบ (เต็มแผ่น)',
-    marginSmall: 'ขอบขนาดเล็ก (10 มม.)',
-    generatePdf: 'สร้างไฟล์ PDF',
-    generating: 'กำลังสร้างไฟล์ PDF...',
-    pages: 'หน้า',
-    choosePhotos: 'เลือกรูปภาพ / ลากรูปมาวางที่นี่',
-    supportFormats: 'รองรับไฟล์ภาพ JPG, PNG อัปโหลดพร้อมกันได้หลายรูป ปรับแต่งง่ายบนมือถือ',
-    noPages: 'ยังไม่ได้อัปโหลดรูปภาพ',
-    editCrop: 'แก้ไข',
-    deletePage: 'ลบหน้านี้',
-    editorTitle: 'เครื่องมือครอปตัดและหมุนภาพ',
-    rotate: 'หมุน 90°',
-    apply: 'ตกลง',
-    dragInstructions: 'ลากที่มุมเพื่อครอปตัดส่วนที่ต้องการ',
-    originalRatioNotice: 'เมื่อเลือก "ขนาดตามรูปต้นฉบับ" การวางแนวกระดาษและระยะขอบจะถูกกำหนดโดยอัตโนมัติตามรูปภาพของคุณ ไม่จำเป็นต้องตั้งค่าเพิ่มเติม',
-  },
-  en: {
-    title: 'PDF Creator',
-    subtitle: 'Compile multiple photos/scans into a clean PDF. Edit, crop, reorder pages.',
-    settings: 'PDF Settings',
-    fileName: 'File Name',
-    pageSize: 'Page Size',
-    standardA4: 'Standard A4',
-    originalRatio: 'Original Ratio',
-    orientation: 'Orientation',
-    portrait: 'Portrait',
-    landscape: 'Landscape',
-    margins: 'Page Margins',
-    marginNone: 'None (Full)',
-    marginSmall: 'Small (10mm)',
-    generatePdf: 'Generate PDF',
-    generating: 'Compiling PDF...',
-    pages: 'pages',
-    choosePhotos: 'Choose / Drop Photos',
-    supportFormats: 'Supports multiple JPG, PNG image uploads. Touch friendly.',
-    noPages: 'No pages uploaded yet',
-    editCrop: 'Edit',
-    deletePage: 'Delete Page',
-    editorTitle: 'Image Editor & Cropper',
-    rotate: 'Rotate 90°',
-    apply: 'Apply Crop',
-    dragInstructions: 'Drag crop corners to adjust page bounds',
-    originalRatioNotice: 'In "Original Ratio" mode, page orientation and margins are automatically determined by each image.',
+  cropData?: {
+    x: number        // percentage (0-100)
+    y: number
+    w: number
+    h: number
   }
 }
 
-export default function PDFCreatorPage() {
-  const [lang, setLang] = useState<'th' | 'en'>('th')
-  const [images, setImages] = useState<ImagePage[]>([])
-  const [editingImage, setEditingImage] = useState<ImagePage | null>(null)
-  
-  // Editor Modal Local State
-  const [editorRotation, setEditorRotation] = useState(0)
-  const [editorCrop, setEditorCrop] = useState({ x: 10, y: 10, w: 80, h: 80 })
-  
-  // PDF Options
-  const [pageSize, setPageSize] = useState<'a4' | 'original'>('a4')
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait')
-  const [margin, setMargin] = useState<0 | 10>(0)
-  const [pdfFileName, setPdfFileName] = useState('LouisAI_Document')
+export default function PdfCreatorPage() {
+  const [images, setImages] = useState<ImageItem[]>([])
+  const [pageSize, setPageSize] = useState<'a4' | 'letter' | 'original'>('a4')
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape' | 'auto'>('auto')
+  const [margin, setMargin] = useState<'none' | 'small' | 'medium'>('none')
   const [generating, setGenerating] = useState(false)
-
-  // Drag and Drop Dragged Item Index
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
 
-  const t = dict[lang]
+  // Editor Modal States
+  const [editingItem, setEditingItem] = useState<ImageItem | null>(null)
+  const [cropBox, setCropBox] = useState({ x: 10, y: 10, w: 80, h: 80 }) // percentages
+  const [cropRotation, setCropRotation] = useState(0)
+  const editorImgRef = useRef<HTMLImageElement | null>(null)
+  const cropBoxRef = useRef<HTMLDivElement | null>(null)
+  const isDraggingCrop = useRef(false)
+  const dragStartPos = useRef({ x: 0, y: 0 })
+  const cropBoxStart = useRef({ x: 0, y: 0, w: 0, h: 0 })
+  const isResizingCrop = useRef<string | null>(null) // 'nw', 'ne', 'se', 'sw'
 
-  // File Upload Handler
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return
-    const filesArray = Array.from(e.target.files)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-    filesArray.forEach((file) => {
+  // Handle File Upload
+  const handleFiles = (files: FileList | null) => {
+    if (!files) return
+    const newItems: ImageItem[] = []
+    
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) return
       const reader = new FileReader()
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          const newImg: ImagePage = {
-            id: Math.random().toString(36).substring(2, 9),
-            name: file.name,
-            src: event.target.result as string,
-            originalSrc: event.target.result as string,
-            rotation: 0,
-            cropPercent: { x: 0, y: 0, w: 100, h: 100 },
-          }
-          setImages((prev) => [...prev, newImg])
+      reader.onload = (e) => {
+        const result = e.target?.result as string
+        if (result) {
+          setImages((prev) => [
+            ...prev,
+            {
+              id: Math.random().toString(36).substring(2, 9),
+              name: file.name,
+              src: result,
+              editedSrc: result,
+              rotation: 0
+            }
+          ])
         }
       }
       reader.readAsDataURL(file)
     })
-    e.target.value = '' // Reset input
   }
 
-  // Reordering Handlers (Desktop: Drag & Drop)
-  const handleDragStart = (idx: number) => {
-    setDraggedIndex(idx)
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files)
   }
 
-  const handleDragOver = (e: React.DragEvent, idx: number) => {
+  // Delete Image
+  const handleDelete = (id: string) => {
+    setImages((prev) => prev.filter((img) => img.id !== id))
+  }
+
+  // Reorder Functions (Mobile & Quick Controls)
+  const moveItem = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return
+    if (direction === 'down' && index === images.length - 1) return
+    
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
+    const updated = [...images]
+    const temp = updated[index]
+    updated[index] = updated[targetIndex]
+    updated[targetIndex] = temp
+    setImages(updated)
+  }
+
+  // Drag and Drop Handlers (Desktop)
+  const handleDragStart = (index: number) => {
+    setDraggedIndex(index)
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault()
   }
 
-  const handleDrop = (idx: number) => {
-    if (draggedIndex === null || draggedIndex === idx) return
+  const handleDrop = (index: number) => {
+    if (draggedIndex === null || draggedIndex === index) return
     const updated = [...images]
-    const [draggedItem] = updated.splice(draggedIndex, 1)
-    updated.splice(idx, 0, draggedItem)
+    const draggedItem = updated[draggedIndex]
+    updated.splice(draggedIndex, 1)
+    updated.splice(index, 0, draggedItem)
     setImages(updated)
     setDraggedIndex(null)
   }
 
-  // Reordering Handlers (Mobile: Shift Buttons)
-  const moveLeft = (idx: number) => {
-    if (idx === 0) return
-    const updated = [...images]
-    const temp = updated[idx]
-    updated[idx] = updated[idx - 1]
-    updated[idx - 1] = temp
-    setImages(updated)
+  // Edit / Crop Modal Opening
+  const openEditor = (item: ImageItem) => {
+    setEditingItem(item)
+    setCropRotation(item.rotation)
+    setCropBox(
+      item.cropData || { x: 10, y: 10, w: 80, h: 80 }
+    )
   }
 
-  const moveRight = (idx: number) => {
-    if (idx === images.length - 1) return
-    const updated = [...images]
-    const temp = updated[idx]
-    updated[idx] = updated[idx + 1]
-    updated[idx + 1] = temp
-    setImages(updated)
+  // Image Rotation in Editor
+  const rotateImage = () => {
+    setCropRotation((prev) => (prev + 90) % 360)
   }
 
-  // Delete Handler
-  const deleteImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id))
-  }
-
-  const [cropRatioMode, setCropRatioMode] = useState<'free' | '1:1' | 'a4' | '4:3' | '16:9'>('free')
-  const [editorImageRatio, setEditorImageRatio] = useState<number>(1)
-
-  // Open Crop/Rotate Modal
-  const openEditor = (img: ImagePage) => {
-    setEditingImage(img)
-    setEditorRotation(img.rotation)
-    setEditorCrop({ ...img.cropPercent })
-    setCropRatioMode('free') // Default to free on open
-    
-    // Load natural aspect ratio
-    const tempImg = new Image()
-    tempImg.src = img.originalSrc
-    tempImg.onload = () => {
-      const is90or270 = img.rotation === 90 || img.rotation === 270
-      const width = is90or270 ? tempImg.height : tempImg.width
-      const height = is90or270 ? tempImg.width : tempImg.height
-      setEditorImageRatio(width / height)
-    }
-  }
-
-  // Crop Box Editor Dragging Logic (Touch & Mouse friendly)
-  const imageContainerRef = useRef<HTMLDivElement>(null)
-  const dragStartRef = useRef<{
-    startX: number
-    startY: number
-    cropX: number
-    cropY: number
-    cropW: number
-    cropH: number
-  } | null>(null)
-  const [activeHandle, setActiveHandle] = useState<string | null>(null) // 'tl', 'tr', 'bl', 'br', 't', 'b', 'l', 'r', 'move'
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, handle: string) => {
-    e.stopPropagation()
+  // Draggable / Resizable Crop Box Logic (Touch & Mouse Support)
+  const handleCropMouseDown = (e: React.MouseEvent | React.TouchEvent, resizeCorner: string | null = null) => {
     e.preventDefault()
-    setActiveHandle(handle)
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
     
-    dragStartRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      cropX: editorCrop.x,
-      cropY: editorCrop.y,
-      cropW: editorCrop.w,
-      cropH: editorCrop.h,
-    }
-
-    if (e.currentTarget.setPointerCapture) {
-      e.currentTarget.setPointerCapture(e.pointerId)
+    dragStartPos.current = { x: clientX, y: clientY }
+    cropBoxStart.current = { ...cropBox }
+    
+    if (resizeCorner) {
+      isResizingCrop.current = resizeCorner
+    } else {
+      isDraggingCrop.current = true
     }
   }
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!activeHandle || !dragStartRef.current || !imageContainerRef.current) return
-    e.preventDefault()
-
-    const start = dragStartRef.current
-    const container = imageContainerRef.current.getBoundingClientRect()
-    const dx = ((e.clientX - start.startX) / container.width) * 100
-    const dy = ((e.clientY - start.startY) / container.height) * 100
-
-    setEditorCrop(() => {
-      let x = start.cropX
-      let y = start.cropY
-      let w = start.cropW
-      let h = start.cropH
-
-      if (activeHandle === 'move') {
-        x = Math.max(0, Math.min(100 - w, start.cropX + dx))
-        y = Math.max(0, Math.min(100 - h, start.cropY + dy))
-        return { x, y, w, h }
-      }
-
-      const isLocked = cropRatioMode !== 'free'
-      let R_val = 1
-      if (cropRatioMode === '1:1') R_val = 1
-      else if (cropRatioMode === 'a4') R_val = 210 / 297
-      else if (cropRatioMode === '4:3') R_val = 4 / 3
-      else if (cropRatioMode === '16:9') R_val = 16 / 9
-
-      const targetRatio = R_val / editorImageRatio // w / h target ratio in percentage space
-
-      if (!isLocked) {
-        // --- Free Mode: Drag 8 handles independently ---
-        if (activeHandle === 'tl') {
-          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
-          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
-          w = start.cropW - (newX - start.cropX)
-          h = start.cropH - (newY - start.cropY)
-          x = newX
-          y = newY
-        } else if (activeHandle === 'tr') {
-          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
-          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
-          h = start.cropH - (newY - start.cropY)
-          y = newY
-        } else if (activeHandle === 'bl') {
-          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
-          w = start.cropW - (newX - start.cropX)
-          x = newX
-          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
-        } else if (activeHandle === 'br') {
-          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
-          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
-        } else if (activeHandle === 't') {
-          const newY = Math.max(0, Math.min(start.cropY + start.cropH - 10, start.cropY + dy))
-          h = start.cropH - (newY - start.cropY)
-          y = newY
-        } else if (activeHandle === 'b') {
-          h = Math.max(10, Math.min(100 - start.cropY, start.cropH + dy))
-        } else if (activeHandle === 'l') {
-          const newX = Math.max(0, Math.min(start.cropX + start.cropW - 10, start.cropX + dx))
-          w = start.cropW - (newX - start.cropX)
-          x = newX
-        } else if (activeHandle === 'r') {
-          w = Math.max(10, Math.min(100 - start.cropX, start.cropW + dx))
+  useEffect(() => {
+    const handleMove = (e: MouseEvent | TouchEvent) => {
+      if (!editingItem || (!isDraggingCrop.current && !isResizingCrop.current)) return
+      
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+      
+      const deltaX = clientX - dragStartPos.current.x
+      const deltaY = clientY - dragStartPos.current.y
+      
+      const container = editorImgRef.current?.parentElement
+      if (!container) return
+      
+      const containerRect = container.getBoundingClientRect()
+      const pctDeltaX = (deltaX / containerRect.width) * 100
+      const pctDeltaY = (deltaY / containerRect.height) * 100
+      
+      setCropBox((prev) => {
+        let newX = prev.x
+        let newY = prev.y
+        let newW = prev.w
+        let newH = prev.h
+        
+        if (isDraggingCrop.current) {
+          newX = Math.max(0, Math.min(100 - prev.w, cropBoxStart.current.x + pctDeltaX))
+          newY = Math.max(0, Math.min(100 - prev.h, cropBoxStart.current.y + pctDeltaY))
+        } else if (isResizingCrop.current) {
+          const corner = isResizingCrop.current
+          if (corner.includes('e')) {
+            newW = Math.max(10, Math.min(100 - prev.x, cropBoxStart.current.w + pctDeltaX))
+          }
+          if (corner.includes('w')) {
+            const potentialW = cropBoxStart.current.w - pctDeltaX
+            if (potentialW >= 10) {
+              newX = Math.max(0, cropBoxStart.current.x + pctDeltaX)
+              newW = cropBoxStart.current.w - (newX - cropBoxStart.current.x)
+            }
+          }
+          if (corner.includes('s')) {
+            newH = Math.max(10, Math.min(100 - prev.y, cropBoxStart.current.h + pctDeltaY))
+          }
+          if (corner.includes('n')) {
+            const potentialH = cropBoxStart.current.h - pctDeltaY
+            if (potentialH >= 10) {
+              newY = Math.max(0, cropBoxStart.current.y + pctDeltaY)
+              newH = cropBoxStart.current.h - (newY - cropBoxStart.current.y)
+            }
+          }
         }
-      } else {
-        // --- Locked Aspect Ratio Mode: Scale proportionally ---
-        if (activeHandle === 'br' || activeHandle === 'r' || activeHandle === 'b') {
-          let newW = start.cropW + dx
-          let newH = newW / targetRatio
-          
-          if (start.cropX + newW > 100) {
-            newW = 100 - start.cropX
-            newH = newW / targetRatio
-          }
-          if (start.cropY + newH > 100) {
-            newH = 100 - start.cropY
-            newW = newH * targetRatio
-          }
-          w = Math.max(10, newW)
-          h = Math.max(10, newH)
-        } else if (activeHandle === 'tl' || activeHandle === 't' || activeHandle === 'l') {
-          const fixedX2 = start.cropX + start.cropW
-          const fixedY2 = start.cropY + start.cropH
-          let newW = start.cropW - dx
-          let newH = newW / targetRatio
-          
-          let newX = fixedX2 - newW
-          let newY = fixedY2 - newH
-          
-          if (newX < 0) {
-            newX = 0
-            newW = fixedX2 - newX
-            newH = newW / targetRatio
-            newY = fixedY2 - newH
-          }
-          if (newY < 0) {
-            newY = 0
-            newH = fixedY2 - newY
-            newW = newH * targetRatio
-            newX = fixedX2 - newW
-          }
-          
-          x = newX
-          y = newY
-          w = Math.max(10, newW)
-          h = Math.max(10, newH)
-        } else if (activeHandle === 'tr') {
-          const fixedX1 = start.cropX
-          const fixedY2 = start.cropY + start.cropH
-          let newW = start.cropW + dx
-          let newH = newW / targetRatio
-          
-          let newY = fixedY2 - newH
-          if (start.cropX + newW > 100) {
-            newW = 100 - start.cropX
-            newH = newW / targetRatio
-            newY = fixedY2 - newH
-          }
-          if (newY < 0) {
-            newY = 0
-            newH = fixedY2 - newY
-            newW = newH * targetRatio
-          }
-          
-          y = newY
-          w = Math.max(10, newW)
-          h = Math.max(10, newH)
-        } else if (activeHandle === 'bl') {
-          const fixedX2 = start.cropX + start.cropW
-          const fixedY1 = start.cropY
-          let newW = start.cropW - dx
-          let newH = newW / targetRatio
-          
-          let newX = fixedX2 - newW
-          if (newX < 0) {
-            newX = 0
-            newW = fixedX2 - newX
-            newH = newW / targetRatio
-          }
-          if (fixedY1 + newH > 100) {
-            newH = 100 - fixedY1
-            newW = newH * targetRatio
-            newX = fixedX2 - newW
-          }
-          
-          x = newX
-          w = Math.max(10, newW)
-          h = Math.max(10, newH)
-        }
-      }
-
-      return { x, y, w, h }
-    })
-  }
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    setActiveHandle(null)
-    dragStartRef.current = null
-    if (e.currentTarget.releasePointerCapture) {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    }
-  }
-
-  // Rotate Handler
-  const handleRotate = () => {
-    setEditorRotation((prev) => {
-      const nextRotation = (prev + 90) % 360
-      setEditorImageRatio((r) => 1 / r)
-      return nextRotation
-    })
-  }
-
-  const handleRatioModeChange = (mode: 'free' | '1:1' | 'a4' | '4:3' | '16:9') => {
-    setCropRatioMode(mode)
-    if (mode === 'free') return
-
-    let R_val = 1
-    if (mode === '1:1') R_val = 1
-    else if (mode === 'a4') R_val = 210 / 297
-    else if (mode === '4:3') R_val = 4 / 3
-    else if (mode === '16:9') R_val = 16 / 9
-
-    const targetRatio = R_val / editorImageRatio // w/h in percent space
-
-    // Snap crop box to center with the target ratio
-    let newW = 80
-    let newH = newW / targetRatio
-
-    if (newH > 80) {
-      newH = 80
-      newW = newH * targetRatio
+        
+        return { x: newX, y: newY, w: newW, h: newH }
+      })
     }
 
-    const newX = (100 - newW) / 2
-    const newY = (100 - newH) / 2
+    const handleUp = () => {
+      isDraggingCrop.current = false
+      isResizingCrop.current = null
+    }
 
-    setEditorCrop({
-      x: Math.max(0, Math.min(100, newX)),
-      y: Math.max(0, Math.min(100, newY)),
-      w: Math.max(10, Math.min(100, newW)),
-      h: Math.max(10, Math.min(100, newH)),
-    })
-  }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    window.addEventListener('touchmove', handleMove, { passive: false })
+    window.addEventListener('touchend', handleUp)
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+      window.removeEventListener('touchmove', handleMove)
+      window.removeEventListener('touchend', handleUp)
+    }
+  }, [editingItem])
 
-  // Apply Changes (Process Canvas Cropping and Rotation)
-  const saveEditedImage = () => {
-    if (!editingImage) return
-
+  // Save Crop & Rotate Edits
+  const saveEdits = () => {
+    if (!editingItem) return
+    
     const img = new Image()
-    img.src = editingImage.originalSrc
+    img.src = editingItem.src
     img.onload = () => {
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
       if (!ctx) return
-
-      // Determine dimensions based on rotation
-      const is90or270 = editorRotation === 90 || editorRotation === 270
-      const width = is90or270 ? img.height : img.width
-      const height = is90or270 ? img.width : img.height
-
-      // Extract Crop Pixels relative to rotated image bounds
-      const cropX = (editorCrop.x / 100) * width
-      const cropY = (editorCrop.y / 100) * height
-      const cropW = (editorCrop.w / 100) * width
-      const cropH = (editorCrop.h / 100) * height
-
-      // Set Canvas to cropped output size
-      canvas.width = cropW
-      canvas.height = cropH
-
-      // Transform context to rotate about cropped origin
+      
+      // Calculate crop coordinates
+      const cropX = (cropBox.x / 100) * img.naturalWidth
+      const cropY = (cropBox.y / 100) * img.naturalHeight
+      const cropW = (cropBox.w / 100) * img.naturalWidth
+      const cropH = (cropBox.h / 100) * img.naturalHeight
+      
+      // Setup canvas size based on crop dimensions & rotation
+      const is90or270 = cropRotation === 90 || cropRotation === 270
+      canvas.width = is90or270 ? cropH : cropW
+      canvas.height = is90or270 ? cropW : cropH
+      
+      // Translate & rotate canvas
       ctx.translate(canvas.width / 2, canvas.height / 2)
-      ctx.rotate((editorRotation * Math.PI) / 180)
-
-      // Draw rotated image centered, accounting for translation
-      // (We map the un-rotated image coordinates back to original size)
-      if (editorRotation === 0) {
-        ctx.drawImage(
-          img,
-          cropX,
-          cropY,
-          cropW,
-          cropH,
-          -canvas.width / 2,
-          -canvas.height / 2,
-          canvas.width / 2 * 2,
-          canvas.height / 2 * 2
-        )
-      } else if (editorRotation === 90) {
-        // Map rotated crop area back to original source img coordinates
-        const srcX = (editorCrop.y / 100) * img.width
-        const srcY = (1 - (editorCrop.x + editorCrop.w) / 100) * img.height
-        const srcW = (editorCrop.h / 100) * img.width
-        const srcH = (editorCrop.w / 100) * img.height
-
-        ctx.drawImage(
-          img,
-          srcX,
-          srcY,
-          srcW,
-          srcH,
-          -canvas.height / 2,
-          -canvas.width / 2,
-          canvas.height,
-          canvas.width
-        )
-      } else if (editorRotation === 180) {
-        const srcX = (1 - (editorCrop.x + editorCrop.w) / 100) * img.width
-        const srcY = (1 - (editorCrop.y + editorCrop.h) / 100) * img.height
-        const srcW = (editorCrop.w / 100) * img.width
-        const srcH = (editorCrop.h / 100) * img.height
-
-        ctx.drawImage(
-          img,
-          srcX,
-          srcY,
-          srcW,
-          srcH,
-          -canvas.width / 2,
-          -canvas.height / 2,
-          canvas.width,
-          canvas.height
-        )
-      } else if (editorRotation === 270) {
-        const srcX = (1 - (editorCrop.y + editorCrop.h) / 100) * img.width
-        const srcY = (editorCrop.x / 100) * img.height
-        const srcW = (editorCrop.h / 100) * img.width
-        const srcH = (editorCrop.w / 100) * img.height
-
-        ctx.drawImage(
-          img,
-          srcX,
-          srcY,
-          srcW,
-          srcH,
-          -canvas.height / 2,
-          -canvas.width / 2,
-          canvas.height,
-          canvas.width
-        )
-      }
-
-      const croppedSrc = canvas.toDataURL('image/jpeg', 0.92)
-
+      ctx.rotate((cropRotation * Math.PI) / 180)
+      
+      // Draw image segment onto canvas
+      ctx.drawImage(
+        img,
+        cropX, cropY, cropW, cropH,
+        -cropW / 2, -cropH / 2, cropW, cropH
+      )
+      
+      const editedSrc = canvas.toDataURL('image/jpeg', 0.9)
+      
       setImages((prev) =>
         prev.map((item) =>
-          item.id === editingImage.id
+          item.id === editingItem.id
             ? {
                 ...item,
-                src: croppedSrc,
-                rotation: editorRotation,
-                cropPercent: editorCrop,
+                editedSrc,
+                rotation: cropRotation,
+                cropData: cropBox
               }
             : item
         )
       )
-      setEditingImage(null)
+      setEditingItem(null)
     }
   }
 
-  // Generate and Download PDF using jsPDF
-  const generatePDF = async () => {
+  // Generate & Download PDF
+  const generatePdf = async () => {
     if (images.length === 0) return
     setGenerating(true)
-
+    
     try {
-      let pdf: any = null
+      // Initialize jsPDF
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'mm',
+        format: 'a4'
+      })
+      
+      // Page size constants in mm
+      const a4Width = 210
+      const a4Height = 297
+      const letterWidth = 215.9
+      const letterHeight = 279.4
+      
+      const marginSize = margin === 'none' ? 0 : margin === 'small' ? 10 : 20
 
       for (let i = 0; i < images.length; i++) {
-        const imgData = images[i].src
+        const item = images[i]
         
-        // Wait to load dimensions
-        await new Promise<void>((resolve) => {
-          const img = new Image()
-          img.src = imgData
-          img.onload = () => {
-            // Convert image pixels to mm at standard 96 DPI
-            // (1 pixel = 25.4 / 96 = 0.264583 mm)
-            const pxToMm = 25.4 / 96
-            const imgW_mm = img.width * pxToMm
-            const imgH_mm = img.height * pxToMm
-
-            const imgIsLandscape = imgW_mm > imgH_mm
-            const pageOrientation = pageSize === 'original'
-              ? (imgIsLandscape ? 'landscape' : 'portrait')
-              : orientation
-
-            const pageFormat = pageSize === 'original'
-              ? [imgW_mm, imgH_mm] as [number, number]
-              : 'a4'
-
-            if (i === 0) {
-              pdf = new jsPDF({
-                orientation: pageOrientation,
-                unit: 'mm',
-                format: pageFormat,
-              })
-            } else if (pdf) {
-              pdf.addPage(pageFormat, pageOrientation)
-            }
-
-            if (pdf) {
-              if (pageSize === 'original') {
-                // For original ratio, draw the image covering 100% of the custom page size
-                pdf.addImage(imgData, 'JPEG', 0, 0, imgW_mm, imgH_mm)
-              } else {
-                // For standard A4, scale and center it inside margins
-                const pageW = pageOrientation === 'portrait' ? 210 : 297
-                const pageH = pageOrientation === 'portrait' ? 297 : 210
-                const m = margin
-
-                const availW = pageW - m * 2
-                const availH = pageH - m * 2
-
-                const imgRatio = imgW_mm / imgH_mm
-                const availRatio = availW / availH
-
-                let destW = availW
-                let destH = availH
-
-                if (imgRatio > availRatio) {
-                  destH = availW / imgRatio
-                } else {
-                  destW = availH * imgRatio
-                }
-
-                const x = m + (availW - destW) / 2
-                const y = m + (availH - destH) / 2
-
-                pdf.addImage(imgData, 'JPEG', x, y, destW, destH)
-              }
-            }
-            resolve()
-          }
+        // Add new page for subsequent items
+        if (i > 0) {
+          pdf.addPage()
+        }
+        
+        // Get image dimensions
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const image = new Image()
+          image.src = item.editedSrc
+          image.onload = () => resolve(image)
+          image.onerror = (err) => reject(err)
         })
-      }
+        
+        const imgWidth = img.naturalWidth
+        const imgHeight = img.naturalHeight
+        
+        // Determine PDF page width and height
+        let pageW = a4Width
+        let pageH = a4Height
+        
+        if (pageSize === 'letter') {
+          pageW = letterWidth
+          pageH = letterHeight
+        } else if (pageSize === 'original') {
+          // Convert pixels to mm roughly (1 pixel = 0.264583 mm)
+          pageW = imgWidth * 0.264583
+          pageH = imgHeight * 0.264583
+          // Set custom page size
+          pdf.setPage(i + 1)
+          // @ts-ignore
+          pdf.internal.pageSize.width = pageW
+          // @ts-ignore
+          pdf.internal.pageSize.height = pageH
+        }
+        
+        // Determine orientation
+        let finalOrientation: 'portrait' | 'landscape' = 'portrait'
+        if (orientation === 'landscape' || (orientation === 'auto' && imgWidth > imgHeight)) {
+          finalOrientation = 'landscape'
+        }
+        
+        // Swap dimensions if landscape
+        if (finalOrientation === 'landscape' && pageSize !== 'original') {
+          const temp = pageW
+          pageW = pageH
+          pageH = temp
+        }
+        
+        // Apply orientation to PDF page
+        if (pageSize !== 'original') {
+          pdf.setPage(i + 1)
+          // @ts-ignore
+          pdf.internal.pageSize.width = pageW
+          // @ts-ignore
+          pdf.internal.pageSize.height = pageH
+        }
 
-      if (pdf) {
-        pdf.save(`${pdfFileName.trim() || 'LouisAI_Document'}.pdf`)
+        // Calculate printable area
+        const printableWidth = pageW - marginSize * 2
+        const printableHeight = pageH - marginSize * 2
+        
+        // Calculate image aspect ratio scale fit
+        const imgRatio = imgWidth / imgHeight
+        const printableRatio = printableWidth / printableHeight
+        
+        let drawWidth = printableWidth
+        let drawHeight = printableHeight
+        
+        if (imgRatio > printableRatio) {
+          // Image is wider than printable area
+          drawHeight = printableWidth / imgRatio
+        } else {
+          // Image is taller than printable area
+          drawWidth = printableHeight * imgRatio
+        }
+        
+        // Center image within margins
+        const xOffset = marginSize + (printableWidth - drawWidth) / 2
+        const yOffset = marginSize + (printableHeight - drawHeight) / 2
+        
+        pdf.addImage(
+          item.editedSrc,
+          'JPEG',
+          xOffset,
+          yOffset,
+          drawWidth,
+          drawHeight
+        )
       }
-    } catch (e) {
-      console.error(e)
-      alert('Failed to generate PDF. Please try again.')
+      
+      pdf.save(`LouisAI_PDF_${Date.now()}.pdf`)
+    } catch (err) {
+      console.error('PDF Generation Failed:', err)
+      alert('ไม่สามารถสร้างไฟล์ PDF ได้ โปรดลองใหม่อีกครั้ง')
     } finally {
       setGenerating(false)
     }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Page Title Header */}
-      <div>
-        <h2 className="text-3xl font-extrabold tracking-tight">{t.title}</h2>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">
-          {t.subtitle}
-        </p>
+    <div className="space-y-8 select-none max-w-4xl mx-auto pb-12">
+      {/* Header section */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800/80 pb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white flex items-center gap-3">
+            <FileText className="h-8 w-8 text-emerald-500" />
+            PDF Creator & Image Editor
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            จัดเรียง ครอบรูปภาพ และหมุนภาพ พร้อมรวมไฟล์เป็น PDF เอกสารคุณภาพสูง
+          </p>
+        </div>
+        
+        <button
+          onClick={generatePdf}
+          disabled={images.length === 0 || generating}
+          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white font-semibold rounded-2xl shadow-lg shadow-emerald-950/20 transition-all duration-200 transform active:scale-95 shrink-0"
+        >
+          {generating ? (
+            <>
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <span>กำลังสร้าง PDF...</span>
+            </>
+          ) : (
+            <>
+              <Download className="h-5 w-5" />
+              <span>ดาวน์โหลดไฟล์ PDF ({images.length} หน้า)</span>
+            </>
+          )}
+        </button>
       </div>
 
-      {/* Main Grid: Options on Left, Images List on Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        {/* PDF Configuration Options Panel */}
-        <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-sm space-y-6">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80">
-            <div className="flex items-center gap-2">
-              <Settings className="h-5 w-5 text-indigo-500" />
-              <h3 className="font-extrabold text-base">{t.settings}</h3>
-            </div>
-            
-            {/* Language Toggle */}
-            <div className="flex gap-1 bg-slate-100 dark:bg-slate-950 p-0.5 border border-slate-200/50 dark:border-slate-800/80 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setLang('th')}
-                className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                  lang === 'th'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-250'
-                }`}
-              >
-                TH
-              </button>
-              <button
-                type="button"
-                onClick={() => setLang('en')}
-                className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                  lang === 'en'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-250'
-                }`}
-              >
-                EN
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {/* Filename Input */}
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                {t.fileName}
-              </label>
-              <input
-                type="text"
-                value={pdfFileName}
-                onChange={(e) => setPdfFileName(e.target.value)}
-                className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 text-sm font-medium"
-              />
-            </div>
-
-            {/* Page Size Options */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                {t.pageSize}
-              </label>
-              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setPageSize('a4')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    pageSize === 'a4'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.standardA4}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPageSize('original')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    pageSize === 'original'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.originalRatio}
-                </button>
-              </div>
-            </div>
-
-            {/* Page Orientation */}
-            <div className={`space-y-2 transition-all duration-300 ${
-              pageSize === 'original' ? 'opacity-40 pointer-events-none select-none' : ''
-            }`}>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                {t.orientation}
-              </label>
-              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
-                <button
-                  type="button"
-                  disabled={pageSize === 'original'}
-                  onClick={() => setOrientation('portrait')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    orientation === 'portrait'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.portrait}
-                </button>
-                <button
-                  type="button"
-                  disabled={pageSize === 'original'}
-                  onClick={() => setOrientation('landscape')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    orientation === 'landscape'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.landscape}
-                </button>
-              </div>
-            </div>
-
-            {/* Margins */}
-            <div className={`space-y-2 transition-all duration-300 ${
-              pageSize === 'original' ? 'opacity-40 pointer-events-none select-none' : ''
-            }`}>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                {t.margins}
-              </label>
-              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
-                <button
-                  type="button"
-                  disabled={pageSize === 'original'}
-                  onClick={() => setMargin(0)}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    margin === 0
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.marginNone}
-                </button>
-                <button
-                  type="button"
-                  disabled={pageSize === 'original'}
-                  onClick={() => setMargin(10)}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    margin === 10
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {t.marginSmall}
-                </button>
-              </div>
-            </div>
-
-            {/* Original Ratio Help Info */}
-            {pageSize === 'original' && (
-              <div className="text-[11px] text-indigo-400 font-semibold leading-relaxed bg-indigo-500/5 dark:bg-indigo-500/10 p-3 rounded-xl border border-indigo-500/20 mt-2 flex items-start gap-2">
-                <span className="text-base leading-none select-none">ℹ️</span>
-                <span>{t.originalRatioNotice}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Action Trigger */}
-          <button
-            onClick={generatePDF}
-            disabled={images.length === 0 || generating}
-            className="w-full flex items-center justify-center gap-2 py-3 px-5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] cursor-pointer"
-          >
-            <FileDown className="h-5 w-5" />
-            {generating ? t.generating : `${t.generatePdf} (${images.length} ${lang === 'th' ? t.pages : images.length > 1 ? 'pages' : 'page'})`}
-          </button>
-        </div>
-
-        {/* Images Reordering and Upload Panel (Right 2 cols) */}
+      {/* Main Grid & Setup */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Upload & Grid Area */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Images Layout */}
           {images.length === 0 ? (
-            /* Beautiful Centered Upload Box (Empty State) */
-            <div className="max-w-md mx-auto bg-slate-50/50 dark:bg-slate-900/10 border border-slate-200 dark:border-slate-800 p-8 text-center rounded-2xl flex flex-col items-center gap-4 shadow-sm relative group overflow-hidden transition-all duration-300">
-              <div className="absolute -right-10 -top-10 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none group-hover:bg-indigo-500/25 transition-all" />
-              <div className="absolute -left-10 -bottom-10 w-24 h-24 bg-purple-500/10 rounded-full blur-xl pointer-events-none group-hover:bg-purple-500/25 transition-all" />
-              
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleFileUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-              
-              <div className="p-3.5 bg-gradient-to-tr from-indigo-500 to-purple-500 text-white rounded-2xl shadow-lg shadow-indigo-600/20 group-hover:scale-105 transition-all duration-300">
-                <Upload className="h-6 w-6" />
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-slate-800 hover:border-emerald-500/50 bg-slate-900/30 hover:bg-slate-900/50 rounded-3xl p-12 text-center cursor-pointer transition-all duration-300 group flex flex-col items-center justify-center space-y-4 min-h-[350px]"
+            >
+              <div className="p-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl group-hover:scale-115 transition-transform duration-300">
+                <Upload className="h-8 w-8" />
               </div>
-              <div>
-                <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
-                  {t.choosePhotos}
-                </h4>
-                <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-                  {t.supportFormats}
+              <div className="space-y-1">
+                <h3 className="text-white font-bold text-base">อัปโหลดรูปภาพเพื่อเริ่มทำ PDF</h3>
+                <p className="text-sm text-slate-400 max-w-xs">
+                  ลากไฟล์รูปภาพมาวางที่นี่ หรือคลิกเพื่อค้นหาและเลือกรูปภาพ
                 </p>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-slate-500">
+                <Info className="h-3.5 w-3.5" />
+                รองรับไฟล์ PNG, JPG, JPEG
               </div>
             </div>
           ) : (
-            /* Images Grid with Integrated Upload Card */
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {/* Sleek Grid Upload Card */}
-              <div className="bg-slate-50/50 dark:bg-slate-900/10 border-2 border-dashed border-slate-200 dark:border-slate-850 hover:border-indigo-500/80 rounded-xl overflow-hidden shadow-sm relative group transition-all duration-300 flex flex-col items-center justify-center text-center p-4 aspect-[3/4] cursor-pointer hover:shadow-indigo-500/5">
-                <div className="absolute -right-6 -top-6 w-16 h-16 bg-indigo-500/5 rounded-full blur-lg pointer-events-none group-hover:bg-indigo-500/15 transition-all" />
-                <div className="absolute -left-6 -bottom-6 w-16 h-16 bg-purple-500/5 rounded-full blur-lg pointer-events-none group-hover:bg-purple-500/15 transition-all" />
-                
-                <input
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
-                
-                <div className="p-2.5 bg-gradient-to-tr from-indigo-500 to-purple-500 text-white rounded-lg mb-2 shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-all">
-                  <Upload className="h-4 w-4" />
-                </div>
-                <span className="font-extrabold text-[11px] text-slate-700 dark:text-slate-200 tracking-wide">
-                  {lang === 'th' ? 'เพิ่มรูปภาพ' : 'Add Photos'}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+                  ลำดับหน้าในเอกสาร ({images.length} หน้า)
                 </span>
-                <span className="text-[9px] text-slate-400 dark:text-slate-550 mt-1 max-w-[100px] leading-tight select-none">
-                  {lang === 'th' ? 'เลือกไฟล์เพิ่ม' : 'Upload more'}
-                </span>
-              </div>
-
-              {images.map((img, idx) => (
-                <div
-                  key={img.id}
-                  draggable
-                  onDragStart={() => handleDragStart(idx)}
-                  onDragOver={(e) => handleDragOver(e, idx)}
-                  onDrop={() => handleDrop(idx)}
-                  className={`bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-850 rounded-xl overflow-hidden shadow-sm relative group transition-all cursor-move ${
-                    draggedIndex === idx ? 'opacity-40 border-indigo-500 border-2' : ''
-                  }`}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-bold bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl transition-all"
                 >
-                  {/* Page index badge */}
-                  <span className="absolute top-2.5 left-2.5 z-10 w-6 h-6 rounded-full bg-slate-950/80 backdrop-blur border border-slate-800 text-white flex items-center justify-center font-mono text-xs font-bold">
-                    {idx + 1}
-                  </span>
+                  <Plus className="h-3.5 w-3.5" />
+                  เพิ่มรูปภาพ
+                </button>
+              </div>
+              
+              {/* Image Grid with Drag-n-Drop & Quick Reorder */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {images.map((img, idx) => (
+                  <div
+                    key={img.id}
+                    draggable
+                    onDragStart={() => handleDragStart(idx)}
+                    onDragOver={(e) => handleDragOver(e, idx)}
+                    onDrop={() => handleDrop(idx)}
+                    className={`bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 space-y-3 relative group transition-all duration-200 ${
+                      draggedIndex === idx ? 'opacity-30 border-emerald-500' : 'hover:border-slate-700'
+                    } cursor-grab active:cursor-grabbing`}
+                  >
+                    {/* Page Index Badge */}
+                    <div className="absolute top-4 left-4 z-10 px-2 py-0.5 bg-slate-950/80 backdrop-blur border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg">
+                      หน้า {idx + 1}
+                    </div>
 
-                  {/* Thumbnail Image Container */}
-                  <div className="aspect-[3/4] bg-slate-950 flex items-center justify-center relative overflow-hidden select-none">
-                    <img
-                      src={img.src}
-                      alt={img.name}
-                      className="max-w-full max-h-full object-contain pointer-events-none"
-                    />
+                    {/* Image Preview Container */}
+                    <div className="aspect-[3/4] w-full bg-slate-950 rounded-xl overflow-hidden relative flex items-center justify-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img 
+                        src={img.editedSrc} 
+                        alt={img.name} 
+                        className="max-w-full max-h-full object-contain pointer-events-none"
+                      />
+                    </div>
+
+                    {/* Image Label */}
+                    <div className="truncate text-xs font-medium text-slate-300 px-1">
+                      {img.name}
+                    </div>
+
+                    {/* Action Controls */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        onClick={() => openEditor(img)}
+                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-emerald-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 hover:border-emerald-500/30 transition-all"
+                      >
+                        <Crop className="h-3 w-3" />
+                        ครอบ/หมุน
+                      </button>
+                      <button
+                        onClick={() => handleDelete(img.id)}
+                        className="flex items-center justify-center gap-1 py-1.5 bg-slate-800/60 hover:bg-rose-600 hover:text-white text-slate-300 text-[10px] font-bold rounded-xl border border-slate-700/40 hover:border-rose-500/30 transition-all"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        ลบออก
+                      </button>
+                    </div>
+
+                    {/* Quick Move Reorder Buttons for Mobile */}
+                    <div className="flex gap-1">
+                      <button
+                        disabled={idx === 0}
+                        onClick={() => moveItem(idx, 'up')}
+                        className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-855 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        disabled={idx === images.length - 1}
+                        onClick={() => moveItem(idx, 'down')}
+                        className="flex-1 flex items-center justify-center py-1 bg-slate-950/40 hover:bg-slate-900 border border-slate-855 text-slate-400 hover:text-white rounded-lg disabled:opacity-20 transition-all"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-
-                  {/* Desktop Action Handles & Mobile shifting */}
-                  <div className="p-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-850 flex items-center justify-between gap-1.5">
-                    {/* Shift Left */}
-                    <button
-                      onClick={() => moveLeft(idx)}
-                      disabled={idx === 0}
-                      className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title={lang === 'th' ? 'เลื่อนไปซ้าย' : 'Move Left'}
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                    </button>
-
-                    {/* Editor Trigger */}
-                    <button
-                      onClick={() => openEditor(img)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-1 px-2.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-[11px] rounded-lg transition-all"
-                      title={t.editCrop}
-                    >
-                      <Crop className="h-3.5 w-3.5" />
-                      {t.editCrop}
-                    </button>
-
-                    {/* Delete */}
-                    <button
-                      onClick={() => deleteImage(img.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-500 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title={t.deletePage}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-
-                    {/* Shift Right */}
-                    <button
-                      onClick={() => moveRight(idx)}
-                      disabled={idx === images.length - 1}
-                      className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title={lang === 'th' ? 'เลื่อนไปขวา' : 'Move Right'}
-                    >
-                      <ArrowRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Image Editor Modal (Touch crop & Rotate) */}
-      {editingImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setEditingImage(null)} />
+        {/* Setting Options sidebar */}
+        <div className="space-y-6">
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-6 space-y-6">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-850 pb-4">
+              🛠️ การตั้งค่าเอกสาร
+            </h2>
 
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-xl rounded-2xl overflow-hidden shadow-2xl relative z-10 p-6 space-y-6 text-slate-100 animate-scale-in">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <h3 className="font-extrabold text-lg flex items-center gap-2">
-                <Crop className="h-5.5 w-5.5 text-indigo-500" />
-                {t.editorTitle}
-              </h3>
-              <button
-                onClick={() => setEditingImage(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-100 bg-slate-800 rounded-lg"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Editor workspace */}
-            <div className="flex flex-col items-center justify-center bg-slate-950 p-4 rounded-xl border border-slate-850 min-h-[300px] max-h-[420px] overflow-hidden relative select-none">
-              <div
-                ref={imageContainerRef}
-                className="relative max-h-full max-w-full"
-                style={{
-                  transform: `rotate(${editorRotation}deg)`,
-                  transition: 'transform 0.25s ease',
-                }}
-              >
-                <img
-                  src={editingImage.originalSrc}
-                  alt="Original"
-                  className="max-h-[300px] max-w-full object-contain pointer-events-none select-none"
-                />
-
-                {/* Draggable Cropping Frame box overlay */}
-                <div
-                  onPointerMove={handlePointerMove}
-                  className="absolute border-2 border-dashed border-indigo-400 bg-indigo-500/10 cursor-move"
-                  style={{
-                    left: `${editorCrop.x}%`,
-                    top: `${editorCrop.y}%`,
-                    width: `${editorCrop.w}%`,
-                    height: `${editorCrop.h}%`,
-                  }}
-                  onPointerDown={(e) => handlePointerDown(e, 'move')}
-                  onPointerUp={handlePointerUp}
-                >
-                  {/* Resize Drag Handles at 4 Corners */}
-                  <div
-                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none z-20"
-                    onPointerDown={(e) => handlePointerDown(e, 'tl')}
-                    onPointerUp={handlePointerUp}
-                  />
-                  <div
-                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none z-20"
-                    onPointerDown={(e) => handlePointerDown(e, 'tr')}
-                    onPointerUp={handlePointerUp}
-                  />
-                  <div
-                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nesw-resize touch-none z-20"
-                    onPointerDown={(e) => handlePointerDown(e, 'bl')}
-                    onPointerUp={handlePointerUp}
-                  />
-                  <div
-                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-400 border border-white rounded-full cursor-nwse-resize touch-none z-20"
-                    onPointerDown={(e) => handlePointerDown(e, 'br')}
-                    onPointerUp={handlePointerUp}
-                  />
-
-                  {/* 4 Side Edges Handles (Only visible in Free mode) */}
-                  {cropRatioMode === 'free' && (
-                    <>
-                      {/* Top Edge */}
-                      <div
-                        className="absolute -top-1 left-1/2 -translate-x-1/2 w-8 h-2 bg-indigo-400 border border-white rounded-full cursor-ns-resize touch-none z-10 hover:bg-indigo-300"
-                        onPointerDown={(e) => handlePointerDown(e, 't')}
-                        onPointerUp={handlePointerUp}
-                      />
-                      {/* Bottom Edge */}
-                      <div
-                        className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-2 bg-indigo-400 border border-white rounded-full cursor-ns-resize touch-none z-10 hover:bg-indigo-300"
-                        onPointerDown={(e) => handlePointerDown(e, 'b')}
-                        onPointerUp={handlePointerUp}
-                      />
-                      {/* Left Edge */}
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-8 bg-indigo-400 border border-white rounded-full cursor-ew-resize touch-none z-10 hover:bg-indigo-300"
-                        onPointerDown={(e) => handlePointerDown(e, 'l')}
-                        onPointerUp={handlePointerUp}
-                      />
-                      {/* Right Edge */}
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-8 bg-indigo-400 border border-white rounded-full cursor-ew-resize touch-none z-10 hover:bg-indigo-300"
-                        onPointerDown={(e) => handlePointerDown(e, 'r')}
-                        onPointerUp={handlePointerUp}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Aspect Ratio Presets */}
+            {/* Page Size Selection */}
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">
-                {lang === 'th' ? 'อัตราส่วนการครอปตัด' : 'Crop Aspect Ratio'}
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                ขนาดหน้ากระดาษ (Page Size)
               </label>
-              <div className="flex flex-wrap justify-center gap-1.5 bg-slate-950 p-1.5 border border-slate-800 rounded-xl">
+              <div className="grid grid-cols-3 gap-2">
                 {[
-                  { mode: 'free', label: lang === 'th' ? 'อิสระ' : 'Free' },
-                  { mode: '1:1', label: '1:1' },
-                  { mode: 'a4', label: 'A4' },
-                  { mode: '4:3', label: '4:3' },
-                  { mode: '16:9', label: '16:9' },
-                ].map((item) => (
+                  { value: 'a4', label: 'A4' },
+                  { value: 'letter', label: 'Letter' },
+                  { value: 'original', label: 'ขนาดจริง' }
+                ].map((opt) => (
                   <button
-                    key={item.mode}
-                    type="button"
-                    onClick={() => handleRatioModeChange(item.mode as any)}
-                    className={`py-1.5 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      cropRatioMode === item.mode
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
+                    key={opt.value}
+                    onClick={() => setPageSize(opt.value as any)}
+                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      pageSize === opt.value
+                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
+                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    {item.label}
+                    {opt.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Actions Footer */}
-            <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-slate-800 items-center justify-between">
-              {/* Tooltip instructions */}
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-                <Maximize className="h-3.5 w-3.5" />
-                {t.dragInstructions}
-              </span>
+            {/* Orientation Selection */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                การวางแนว (Orientation)
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'auto', label: 'ออโต้' },
+                  { value: 'portrait', label: 'แนวตั้ง' },
+                  { value: 'landscape', label: 'แนวนอน' }
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setOrientation(opt.value as any)}
+                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      orientation === opt.value
+                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
+                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-              <div className="flex gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={handleRotate}
-                  className="flex-1 sm:flex-initial py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-slate-100 text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5"
+            {/* Margin Selection */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                ระยะขอบกระดาษ (Margins)
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'none', label: 'ไม่มีขอบ' },
+                  { value: 'small', label: 'ขอบแคบ' },
+                  { value: 'medium', label: 'ขอบกลาง' }
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setMargin(opt.value as any)}
+                    className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      margin === opt.value
+                        ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400'
+                        : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/60 border border-slate-850 rounded-2xl text-[11px] text-slate-400 space-y-2 leading-relaxed">
+              <div className="font-semibold text-slate-300 flex items-center gap-1.5">
+                <Info className="h-3.5 w-3.5 text-emerald-500" /> คำแนะนำ
+              </div>
+              <p>1. แนะนำอัปโหลดรูปภาพที่มีแนวทิศทางเดียวกันเพื่อความสวยงาม</p>
+              <p>2. สามารถคลิก **"ครอบ/หมุน"** บนหน้าพรีวิวเพื่อครอบตัดภาพหรือแก้ทิศทางของสลิปที่เอียงได้</p>
+              <p>3. จัดลำดับใหม่ได้โดยการ **ลากการ์ดสลับที่กัน** หรือใช้ปุ่มลูกศร ⬆️ ⬇️ ด้านล่างของแต่ละการ์ด</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Hidden File Input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        multiple
+        accept="image/*"
+        className="hidden"
+      />
+
+      {/* ── Visual Canvas Editor Modal ── */}
+      {editingItem && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-950/40 border-b border-slate-850 flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-white text-base">ครอบตัด & หมุนรูปภาพ</h3>
+                <p className="text-xs text-slate-400">ใช้นิ้วลากขอบครอบเพื่อตัด และหมุนภาพให้ตรงทิศทาง</p>
+              </div>
+              <button 
+                onClick={() => setEditingItem(null)}
+                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-all"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Canvas Working Area */}
+            <div className="flex-1 bg-slate-950 p-6 flex items-center justify-center overflow-auto min-h-[300px] relative">
+              <div 
+                className="relative max-w-full max-h-[50vh] flex items-center justify-center select-none"
+                style={{ transform: `rotate(${cropRotation}deg)`, transition: 'transform 0.2s ease-out' }}
+              >
+                {/* Image under edit */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  ref={editorImgRef}
+                  src={editingItem.src}
+                  alt="Editor Mode"
+                  className="max-w-full max-h-[50vh] object-contain pointer-events-none rounded-lg"
+                />
+
+                {/* Draggable Crop Frame */}
+                <div
+                  ref={cropBoxRef}
+                  onMouseDown={(e) => handleCropMouseDown(e)}
+                  onTouchStart={(e) => handleCropMouseDown(e)}
+                  className="absolute border-2 border-emerald-500 bg-emerald-500/10 cursor-move shadow-[0_0_0_9999px_rgba(0,0,0,0.65)] rounded-sm"
+                  style={{
+                    left: `${cropBox.x}%`,
+                    top: `${cropBox.y}%`,
+                    width: `${cropBox.w}%`,
+                    height: `${cropBox.h}%`
+                  }}
                 >
-                  <RotateCw className="h-4.5 w-4.5" />
-                  {t.rotate}
+                  {/* Resize Handles for Crop Box */}
+                  {['nw', 'ne', 'se', 'sw'].map((corner) => (
+                    <div
+                      key={corner}
+                      onMouseDown={(e) => handleCropMouseDown(e, corner)}
+                      onTouchStart={(e) => handleCropMouseDown(e, corner)}
+                      className={`absolute w-4 h-4 bg-emerald-500 border border-white rounded-full -translate-x-1/2 -translate-y-1/2 cursor-crosshair z-20 ${
+                        corner === 'nw' ? 'top-0 left-0' :
+                        corner === 'ne' ? 'top-0 left-full' :
+                        corner === 'se' ? 'top-full left-full' : 'top-full left-0'
+                      }`}
+                    />
+                  ))}
+                  
+                  {/* Aspect Helper Center indicator */}
+                  <div className="absolute inset-0 border border-emerald-500/30 grid grid-cols-3 grid-rows-3 pointer-events-none">
+                    <div className="border-r border-b border-emerald-500/20" />
+                    <div className="border-r border-b border-emerald-500/20" />
+                    <div className="border-b border-emerald-500/20" />
+                    <div className="border-r border-b border-emerald-500/20" />
+                    <div className="border-r border-b border-emerald-500/20" />
+                    <div className="border-b border-emerald-500/20" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Bottom Actions */}
+            <div className="px-6 py-4 bg-slate-950/40 border-t border-slate-850 flex justify-between items-center gap-3">
+              <button
+                onClick={rotateImage}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold rounded-xl border border-slate-700/50 transition-all"
+              >
+                <RotateCw className="h-4 w-4" />
+                <span>หมุนภาพ 90°</span>
+              </button>
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingItem(null)}
+                  className="px-4 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-sm font-semibold rounded-xl transition-all"
+                >
+                  ยกเลิก
                 </button>
                 <button
-                  type="button"
-                  onClick={saveEditedImage}
-                  className="flex-1 sm:flex-initial py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-1.5"
+                  onClick={saveEdits}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-md transition-all"
                 >
-                  <Check className="h-4.5 w-4.5" />
-                  {t.apply}
+                  <Check className="h-4 w-4" />
+                  บันทึกการแก้ไข
                 </button>
               </div>
             </div>
