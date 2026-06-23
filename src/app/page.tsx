@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [mockName, setMockName] = useState('Louis Tester')
   const [showMockForm, setShowMockForm] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [liffLoading, setLiffLoading] = useState(false)
 
   // Redirect to dashboard if logged in
   useEffect(() => {
@@ -19,6 +20,48 @@ export default function LoginPage() {
       router.push('/dashboard')
     }
   }, [status, router])
+
+  // Initialize LINE LIFF for auto-login inside LINE Client
+  useEffect(() => {
+    const initLiff = async () => {
+      const liffId = process.env.NEXT_PUBLIC_LIFF_ID
+      if (!liffId || liffId.includes('mock') || liffId.includes('your-liff-id')) {
+        return // Skip if LIFF ID is not configured with a real one
+      }
+
+      setLiffLoading(true)
+      try {
+        const liffModule = await import('@line/liff')
+        const liff = liffModule.default
+
+        await liff.init({ liffId })
+        
+        if (liff.isLoggedIn()) {
+          const profile = await liff.getProfile()
+          if (profile?.userId) {
+            // Auto sign in using NextAuth Credentials provider (mock-line)
+            await signIn('mock-line', {
+              userId: profile.userId,
+              name: profile.displayName || 'LINE User',
+              callbackUrl: '/dashboard',
+              redirect: true,
+            })
+          }
+        } else {
+          // If running inside LINE Client app, trigger login immediately
+          if (liff.isInClient()) {
+            liff.login()
+          }
+        }
+      } catch (err) {
+        console.error('LIFF initialization failed:', err)
+      } finally {
+        setLiffLoading(false)
+      }
+    }
+
+    initLiff()
+  }, [])
 
   const handleLineLogin = async () => {
     setLoading(true)
@@ -48,12 +91,14 @@ export default function LoginPage() {
     }
   }
 
-  if (status === 'loading' || status === 'authenticated') {
+  if (status === 'loading' || status === 'authenticated' || liffLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-100">
         <div className="text-center space-y-4">
           <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="text-slate-400 font-medium text-sm">Redirecting to dashboard...</p>
+          <p className="text-slate-400 font-medium text-sm">
+            {liffLoading ? 'Initializing LINE session...' : 'Redirecting to dashboard...'}
+          </p>
         </div>
       </div>
     )
