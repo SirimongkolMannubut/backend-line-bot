@@ -27,7 +27,67 @@ interface ImagePage {
   cropPercent: { x: number; y: number; w: number; h: number } // 0-100 percentage values
 }
 
+const dict = {
+  th: {
+    title: 'เครื่องมือสร้าง PDF',
+    subtitle: 'รวมรูปภาพ/ภาพสแกนหลายรูปเป็นไฟล์ PDF จัดเรียง ครอปตัด และหมุนภาพได้ตามต้องการ',
+    settings: 'ตั้งค่า PDF',
+    fileName: 'ชื่อไฟล์',
+    pageSize: 'ขนาดหน้ากระดาษ',
+    standardA4: 'ขนาดมาตรฐาน A4',
+    originalRatio: 'ขนาดตามรูปต้นฉบับ',
+    orientation: 'การวางแนวกระดาษ',
+    portrait: 'แนวตั้ง',
+    landscape: 'แนวนอน',
+    margins: 'ระยะขอบกระดาษ',
+    marginNone: 'ไม่มีขอบ (เต็มแผ่น)',
+    marginSmall: 'ขอบขนาดเล็ก (10 มม.)',
+    generatePdf: 'สร้างไฟล์ PDF',
+    generating: 'กำลังสร้างไฟล์ PDF...',
+    pages: 'หน้า',
+    choosePhotos: 'เลือกรูปภาพ / ลากรูปมาวางที่นี่',
+    supportFormats: 'รองรับไฟล์ภาพ JPG, PNG อัปโหลดพร้อมกันได้หลายรูป ปรับแต่งง่ายบนมือถือ',
+    noPages: 'ยังไม่ได้อัปโหลดรูปภาพ',
+    editCrop: 'แก้ไข',
+    deletePage: 'ลบหน้านี้',
+    editorTitle: 'เครื่องมือครอปตัดและหมุนภาพ',
+    rotate: 'หมุน 90°',
+    apply: 'ตกลง',
+    dragInstructions: 'ลากที่มุมเพื่อครอปตัดส่วนที่ต้องการ',
+    originalRatioNotice: 'เมื่อเลือก "ขนาดตามรูปต้นฉบับ" การวางแนวกระดาษและระยะขอบจะถูกกำหนดโดยอัตโนมัติตามรูปภาพของคุณ ไม่จำเป็นต้องตั้งค่าเพิ่มเติม',
+  },
+  en: {
+    title: 'PDF Creator',
+    subtitle: 'Compile multiple photos/scans into a clean PDF. Edit, crop, reorder pages.',
+    settings: 'PDF Settings',
+    fileName: 'File Name',
+    pageSize: 'Page Size',
+    standardA4: 'Standard A4',
+    originalRatio: 'Original Ratio',
+    orientation: 'Orientation',
+    portrait: 'Portrait',
+    landscape: 'Landscape',
+    margins: 'Page Margins',
+    marginNone: 'None (Full)',
+    marginSmall: 'Small (10mm)',
+    generatePdf: 'Generate PDF',
+    generating: 'Compiling PDF...',
+    pages: 'pages',
+    choosePhotos: 'Choose / Drop Photos',
+    supportFormats: 'Supports multiple JPG, PNG image uploads. Touch friendly.',
+    noPages: 'No pages uploaded yet',
+    editCrop: 'Edit',
+    deletePage: 'Delete Page',
+    editorTitle: 'Image Editor & Cropper',
+    rotate: 'Rotate 90°',
+    apply: 'Apply Crop',
+    dragInstructions: 'Drag crop corners to adjust page bounds',
+    originalRatioNotice: 'In "Original Ratio" mode, page orientation and margins are automatically determined by each image.',
+  }
+}
+
 export default function PDFCreatorPage() {
+  const [lang, setLang] = useState<'th' | 'en'>('th')
   const [images, setImages] = useState<ImagePage[]>([])
   const [editingImage, setEditingImage] = useState<ImagePage | null>(null)
   
@@ -44,6 +104,8 @@ export default function PDFCreatorPage() {
 
   // Drag and Drop Dragged Item Index
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+
+  const t = dict[lang]
 
   // File Upload Handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -397,9 +459,9 @@ export default function PDFCreatorPage() {
     <div className="space-y-6">
       {/* Page Title Header */}
       <div>
-        <h2 className="text-3xl font-extrabold tracking-tight">PDF Creator</h2>
+        <h2 className="text-3xl font-extrabold tracking-tight">{t.title}</h2>
         <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Compile multiple photos/scans into a clean PDF. Edit, crop, reorder pages.
+          {t.subtitle}
         </p>
       </div>
 
@@ -407,16 +469,44 @@ export default function PDFCreatorPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* PDF Configuration Options Panel */}
         <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-sm space-y-6">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800/80">
-            <Settings className="h-5 w-5 text-indigo-500" />
-            <h3 className="font-extrabold text-base">PDF Settings</h3>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center gap-2">
+              <Settings className="h-5 w-5 text-indigo-500" />
+              <h3 className="font-extrabold text-base">{t.settings}</h3>
+            </div>
+            
+            {/* Language Toggle */}
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-950 p-0.5 border border-slate-200/50 dark:border-slate-800/80 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setLang('th')}
+                className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                  lang === 'th'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-250'
+                }`}
+              >
+                TH
+              </button>
+              <button
+                type="button"
+                onClick={() => setLang('en')}
+                className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                  lang === 'en'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-250'
+                }`}
+              >
+                EN
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
             {/* Filename Input */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                File Name
+                {t.fileName}
               </label>
               <input
                 type="text"
@@ -429,39 +519,45 @@ export default function PDFCreatorPage() {
             {/* Page Size Options */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                Page Size
+                {t.pageSize}
               </label>
               <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
                 <button
+                  type="button"
                   onClick={() => setPageSize('a4')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                  className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     pageSize === 'a4'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  Standard A4
+                  {t.standardA4}
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPageSize('original')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
+                  className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     pageSize === 'original'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  Original Ratio
+                  {t.originalRatio}
                 </button>
               </div>
             </div>
 
             {/* Page Orientation */}
-            <div className="space-y-2">
+            <div className={`space-y-2 transition-all duration-300 ${
+              pageSize === 'original' ? 'opacity-40 pointer-events-none select-none' : ''
+            }`}>
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                Orientation
+                {t.orientation}
               </label>
               <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
                 <button
+                  type="button"
+                  disabled={pageSize === 'original'}
                   onClick={() => setOrientation('portrait')}
                   className={`py-2 rounded-lg text-xs font-bold transition-all ${
                     orientation === 'portrait'
@@ -469,9 +565,11 @@ export default function PDFCreatorPage() {
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  Portrait
+                  {t.portrait}
                 </button>
                 <button
+                  type="button"
+                  disabled={pageSize === 'original'}
                   onClick={() => setOrientation('landscape')}
                   className={`py-2 rounded-lg text-xs font-bold transition-all ${
                     orientation === 'landscape'
@@ -479,18 +577,22 @@ export default function PDFCreatorPage() {
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  Landscape
+                  {t.landscape}
                 </button>
               </div>
             </div>
 
             {/* Margins */}
-            <div className="space-y-2">
+            <div className={`space-y-2 transition-all duration-300 ${
+              pageSize === 'original' ? 'opacity-40 pointer-events-none select-none' : ''
+            }`}>
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                Page Margins
+                {t.margins}
               </label>
               <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-950 p-1 border border-slate-200/60 dark:border-slate-850 rounded-xl">
                 <button
+                  type="button"
+                  disabled={pageSize === 'original'}
                   onClick={() => setMargin(0)}
                   className={`py-2 rounded-lg text-xs font-bold transition-all ${
                     margin === 0
@@ -498,9 +600,11 @@ export default function PDFCreatorPage() {
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  None (Full)
+                  {t.marginNone}
                 </button>
                 <button
+                  type="button"
+                  disabled={pageSize === 'original'}
                   onClick={() => setMargin(10)}
                   className={`py-2 rounded-lg text-xs font-bold transition-all ${
                     margin === 10
@@ -508,10 +612,18 @@ export default function PDFCreatorPage() {
                       : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
                 >
-                  Small (10mm)
+                  {t.marginSmall}
                 </button>
               </div>
             </div>
+
+            {/* Original Ratio Help Info */}
+            {pageSize === 'original' && (
+              <div className="text-[11px] text-indigo-400 font-semibold leading-relaxed bg-indigo-500/5 dark:bg-indigo-500/10 p-3 rounded-xl border border-indigo-500/20 mt-2 flex items-start gap-2">
+                <span className="text-base leading-none select-none">ℹ️</span>
+                <span>{t.originalRatioNotice}</span>
+              </div>
+            )}
           </div>
 
           {/* Action Trigger */}
@@ -521,7 +633,7 @@ export default function PDFCreatorPage() {
             className="w-full flex items-center justify-center gap-2 py-3 px-5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] cursor-pointer"
           >
             <FileDown className="h-5 w-5" />
-            {generating ? 'Compiling PDF...' : `Generate PDF (${images.length} pages)`}
+            {generating ? t.generating : `${t.generatePdf} (${images.length} ${lang === 'th' ? t.pages : images.length > 1 ? 'pages' : 'page'})`}
           </button>
         </div>
 
@@ -541,10 +653,10 @@ export default function PDFCreatorPage() {
                 <Upload className="h-7 w-7" />
               </div>
               <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
-                Choose / Drop Photos
+                {t.choosePhotos}
               </h4>
               <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-                Supports multiple JPG, PNG image uploads. Touch friendly.
+                {t.supportFormats}
               </p>
             </div>
           </div>
@@ -553,7 +665,7 @@ export default function PDFCreatorPage() {
           {images.length === 0 && (
             <div className="bg-slate-50/50 dark:bg-slate-900/10 border border-slate-200 dark:border-slate-850 p-12 text-center text-slate-500 rounded-2xl flex flex-col items-center gap-3">
               <FileImage className="h-10 w-10 text-slate-400" />
-              <p className="font-semibold text-sm">No pages uploaded yet</p>
+              <p className="font-semibold text-sm">{t.noPages}</p>
             </div>
           )}
 
@@ -592,7 +704,7 @@ export default function PDFCreatorPage() {
                       onClick={() => moveLeft(idx)}
                       disabled={idx === 0}
                       className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title="Move Left"
+                      title={lang === 'th' ? 'เลื่อนไปซ้าย' : 'Move Left'}
                     >
                       <ArrowLeft className="h-4 w-4" />
                     </button>
@@ -601,17 +713,17 @@ export default function PDFCreatorPage() {
                     <button
                       onClick={() => openEditor(img)}
                       className="flex-1 flex items-center justify-center gap-1.5 py-1 px-2.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-[11px] rounded-lg transition-all"
-                      title="Edit / Crop"
+                      title={t.editCrop}
                     >
                       <Crop className="h-3.5 w-3.5" />
-                      Edit
+                      {t.editCrop}
                     </button>
 
                     {/* Delete */}
                     <button
                       onClick={() => deleteImage(img.id)}
                       className="p-1.5 text-slate-400 hover:text-rose-500 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title="Delete Page"
+                      title={t.deletePage}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -621,7 +733,7 @@ export default function PDFCreatorPage() {
                       onClick={() => moveRight(idx)}
                       disabled={idx === images.length - 1}
                       className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-20 transition-all rounded-lg hover:bg-slate-200 dark:hover:bg-slate-850"
-                      title="Move Right"
+                      title={lang === 'th' ? 'เลื่อนไปขวา' : 'Move Right'}
                     >
                       <ArrowRight className="h-4 w-4" />
                     </button>
@@ -643,7 +755,7 @@ export default function PDFCreatorPage() {
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <h3 className="font-extrabold text-lg flex items-center gap-2">
                 <Crop className="h-5.5 w-5.5 text-indigo-500" />
-                Image Editor & Cropper
+                {t.editorTitle}
               </h3>
               <button
                 onClick={() => setEditingImage(null)}
@@ -712,7 +824,7 @@ export default function PDFCreatorPage() {
               {/* Tooltip instructions */}
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
                 <Maximize className="h-3.5 w-3.5" />
-                Drag crop corners to adjust page bounds
+                {t.dragInstructions}
               </span>
 
               <div className="flex gap-2 w-full sm:w-auto">
@@ -722,7 +834,7 @@ export default function PDFCreatorPage() {
                   className="flex-1 sm:flex-initial py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-slate-350 hover:text-slate-100 text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5"
                 >
                   <RotateCw className="h-4.5 w-4.5" />
-                  Rotate 90°
+                  {t.rotate}
                 </button>
                 <button
                   type="button"
@@ -730,7 +842,7 @@ export default function PDFCreatorPage() {
                   className="flex-1 sm:flex-initial py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-1.5"
                 >
                   <Check className="h-4.5 w-4.5" />
-                  Apply Crop
+                  {t.apply}
                 </button>
               </div>
             </div>
