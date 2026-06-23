@@ -802,26 +802,44 @@ export default function PDFCreatorPage() {
         {/* Images Reordering and Upload Panel (Right 2 cols) */}
         <div className="lg:col-span-2 space-y-6">
           {/* Upload Area */}
-          <div className="relative group">
-            <input
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={handleFileUpload}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-            />
-            <div className="border-2 border-dashed border-slate-300 dark:border-slate-800 group-hover:border-indigo-500 rounded-2xl p-8 flex flex-col items-center justify-center text-center bg-white dark:bg-slate-900/20 backdrop-blur transition-all duration-300">
-              <div className="p-3.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-500 rounded-2xl mb-4 group-hover:scale-105 transition-all">
-                <Upload className="h-7 w-7" />
+          {images.length > 0 ? (
+            <div className="relative group border-2 border-dashed border-slate-300 dark:border-slate-800 hover:border-indigo-500 rounded-xl p-3 bg-white dark:bg-slate-900/10 backdrop-blur transition-all duration-300">
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <div className="flex items-center justify-center gap-2">
+                <Upload className="h-5 w-5 text-indigo-500" />
+                <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
+                  {lang === 'th' ? 'อัปโหลดรูปภาพเพิ่ม...' : 'Upload more photos...'}
+                </span>
               </div>
-              <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
-                {t.choosePhotos}
-              </h4>
-              <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-                {t.supportFormats}
-              </p>
             </div>
-          </div>
+          ) : (
+            <div className="relative group">
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <div className="border-2 border-dashed border-slate-300 dark:border-slate-800 group-hover:border-indigo-500 rounded-2xl p-8 flex flex-col items-center justify-center text-center bg-white dark:bg-slate-900/20 backdrop-blur transition-all duration-300">
+                <div className="p-3.5 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-500 rounded-2xl mb-4 group-hover:scale-105 transition-all">
+                  <Upload className="h-7 w-7" />
+                </div>
+                <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-200">
+                  {t.choosePhotos}
+                </h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
+                  {t.supportFormats}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Empty State */}
           {images.length === 0 && (
