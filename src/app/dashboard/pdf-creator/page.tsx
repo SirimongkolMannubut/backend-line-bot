@@ -46,6 +46,7 @@ function clamp(v: number, lo: number, hi: number) {
 
 /** Render src image rotated by `deg` onto a new canvas, return dataURL */
 function renderRotatedCanvas(src: string, deg: number): Promise<string> {
+  if (deg % 360 === 0) return Promise.resolve(src)
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
@@ -701,9 +702,10 @@ export default function PdfCreatorPage() {
                     draggable={false}
                     style={{
                       display: 'block',
+                      width: 'auto',
+                      height: 'auto',
                       maxWidth: 'min(100vw - 32px, 560px)',
                       maxHeight: 'min(42vh, 360px)',
-                      objectFit: 'contain',
                       userSelect: 'none',
                       pointerEvents: 'none',
                       borderRadius: 8,
