@@ -132,27 +132,80 @@ export default function PdfCreatorPage() {
 
   // ── File handling ─────────────────────────────────────────────────────────
 
-  const handleFiles = (files: FileList | null) => {
-    if (!files) return
-    Array.from(files).forEach((file) => {
-      if (!file.type.startsWith('image/')) return
+  // Compress image on the client side to avoid OOM memory crashes on mobile
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader()
-      reader.onload = (e) => {
-        const result = e.target?.result as string
-        if (!result) return
-        setImages((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substring(2, 9),
-            name: file.name,
-            src: result,
-            editedSrc: result,
-            rotation: 0,
-          },
-        ])
+      reader.onload = (event) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            resolve(event.target?.result as string)
+            return
+          }
+
+          // Capping max dimensions at 1600px for print quality vs performance
+          const MAX_WIDTH = 1600
+          const MAX_HEIGHT = 1600
+          let width = img.width
+          let height = img.height
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width)
+              width = MAX_WIDTH
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height)
+              height = MAX_HEIGHT
+            }
+          }
+
+          canvas.width = width
+          canvas.height = height
+          ctx.drawImage(img, 0, 0, width, height)
+
+          // Export as compressed JPEG (0.8 quality)
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8)
+          resolve(compressedDataUrl)
+        }
+        img.onerror = () => reject(new Error('Failed to load image for compression'))
+        img.src = event.target?.result as string
       }
+      reader.onerror = () => reject(new Error('Failed to read file'))
       reader.readAsDataURL(file)
     })
+  }
+
+  // Handle File Upload with concurrent compression
+  const handleFiles = async (files: FileList | null) => {
+    if (!files) return
+    
+    const compressionPromises = Array.from(files)
+      .filter((file) => file.type.startsWith('image/'))
+      .map(async (file) => {
+        try {
+          const compressedSrc = await compressImage(file)
+          return {
+            id: Math.random().toString(36).substring(2, 9),
+            name: file.name,
+            src: compressedSrc,
+            editedSrc: compressedSrc,
+            rotation: 0
+          }
+        } catch (err) {
+          console.error('Image compression failed for:', file.name, err)
+          return null
+        }
+      })
+      
+    const newItems = (await Promise.all(compressionPromises)).filter(Boolean) as ImageItem[]
+    if (newItems.length > 0) {
+      setImages((prev) => [...prev, ...newItems])
+    }
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
