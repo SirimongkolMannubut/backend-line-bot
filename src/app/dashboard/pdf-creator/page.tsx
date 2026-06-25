@@ -105,6 +105,24 @@ export default function PdfCreatorPage() {
   const [margin, setMargin] = useState<'none' | 'small' | 'medium'>('none')
   const [generating, setGenerating] = useState(false)
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [pdfName, setPdfName] = useState('LouisAI_Document')
+  const [liffInstance, setLiffInstance] = useState<any>(null)
+
+  useEffect(() => {
+    const initLiff = async () => {
+      const liffId = process.env.NEXT_PUBLIC_LIFF_ID
+      if (!liffId || liffId.includes('mock') || liffId.includes('your-liff-id')) return
+      try {
+        const liffModule = await import('@line/liff')
+        const liff = liffModule.default
+        await liff.init({ liffId })
+        setLiffInstance(liff)
+      } catch (err) {
+        console.error('LIFF init error in PDF Creator:', err)
+      }
+    }
+    initLiff()
+  }, [])
 
   // ── Editor states ─────────────────────────────────────────────────────────
   const [editingItem, setEditingItem] = useState<ImageItem | null>(null)
@@ -515,8 +533,55 @@ export default function PdfCreatorPage() {
         pdf.addImage(images[i].editedSrc, 'JPEG', mg + (pw - dw) / 2, mg + (ph - dh) / 2, dw, dh)
       }
 
-      pdf.save(`LouisAI_PDF_${Date.now()}.pdf`)
-    } catch (err) {
+      const cleanName = pdfName.trim() || 'LouisAI_Document'
+      const filename = cleanName.endsWith('.pdf') ? cleanName : `${cleanName}.pdf`
+
+      const isLineBrowser = liffInstance?.isInClient() || /Line/i.test(navigator.userAgent)
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(navigator.userAgent)
+
+      if (isLineBrowser || isMobile) {
+        // Convert to base64
+        const arrayBuffer = pdf.output('arraybuffer')
+        const uint8 = new Uint8Array(arrayBuffer)
+        let binary = ''
+        const len = uint8.byteLength
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(uint8[i])
+        }
+        const pdfBase64 = window.btoa(binary)
+
+        // Upload PDF to server
+        const response = await fetch('/api/upload-pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            pdfBase64,
+            filename,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to upload PDF to server')
+        }
+
+        const data = await response.json()
+        if (data.error) {
+          throw new Error(data.error)
+        }
+
+        const absoluteUrl = window.location.origin + data.url
+
+        if (liffInstance?.isInClient()) {
+          liffInstance.openWindow({ url: absoluteUrl, external: true })
+        } else {
+          window.open(absoluteUrl, '_blank')
+        }
+      } else {
+        pdf.save(filename)
+      }
+    } catch (err: any) {
       console.error(err)
       alert('ไม่สามารถสร้างไฟล์ PDF ได้ โปรดลองใหม่อีกครั้ง')
     } finally {
@@ -640,6 +705,25 @@ export default function PdfCreatorPage() {
             <h2 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-4">
               🛠️ การตั้งค่าเอกสาร
             </h2>
+
+            {/* ตั้งชื่อไฟล์ PDF */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                ชื่อไฟล์เอกสาร (PDF Name)
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={pdfName}
+                  onChange={(e) => setPdfName(e.target.value)}
+                  placeholder="ป้อนชื่อไฟล์..."
+                  className="w-full bg-slate-950/60 border border-slate-800 hover:border-slate-700 focus:border-emerald-500/80 text-white rounded-xl pl-4 pr-12 py-2.5 text-sm focus:outline-none transition-all placeholder-slate-600 font-medium font-sans"
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 select-none font-mono">
+                  .pdf
+                </span>
+              </div>
+            </div>
             {[
               {
                 label: 'ขนาดหน้ากระดาษ',
