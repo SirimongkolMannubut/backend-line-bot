@@ -13,6 +13,8 @@ interface Slip {
   raw_text: string | null
   created: string
   batch_id: string | null
+  sender: string | null
+  receiver: string | null
 }
 
 export default function SlipsPage() {
@@ -147,6 +149,18 @@ export default function SlipsPage() {
 
                 <div className="space-y-1.5 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-150 dark:border-slate-800/80 pt-3">
                   <p className="flex justify-between">
+                    <span>Sender:</span>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
+                      {slip.sender || 'N/A'}
+                    </span>
+                  </p>
+                  <p className="flex justify-between">
+                    <span>Receiver:</span>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[160px]">
+                      {slip.receiver || 'N/A'}
+                    </span>
+                  </p>
+                  <p className="flex justify-between">
                     <span>Reference:</span>
                     <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
                       {slip.ref || 'N/A'}
@@ -239,6 +253,28 @@ export default function SlipsPage() {
                 </span>
               </div>
             </div>
+
+            {/* Sender and Receiver */}
+            {(selectedSlip.sender || selectedSlip.receiver) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-semibold bg-slate-950 p-4 border border-slate-800 rounded-xl">
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-0.5">
+                    Sender (ผู้โอน)
+                  </span>
+                  <span className="text-sm font-bold text-slate-200">
+                    {selectedSlip.sender || 'Unknown'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-0.5">
+                    Receiver (ผู้รับ)
+                  </span>
+                  <span className="text-sm font-bold text-slate-200">
+                    {selectedSlip.receiver || 'Unknown'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* OCR JSON Content */}
             <div className="space-y-2">

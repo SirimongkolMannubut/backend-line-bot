@@ -40,6 +40,8 @@ model Slip {
   raw_text String? @map("raw_text")
   created  String
   batch_id String? @map("batch_id")
+  sender   String?
+  receiver String?
 
   @@map("slips")
 }
