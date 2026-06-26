@@ -29,6 +29,22 @@ export async function POST(req: NextRequest) {
 
     fs.writeFileSync(filePath, buffer)
 
+    // Asynchronous-like cleanup of old temp PDFs (older than 1 hour)
+    try {
+      const files = fs.readdirSync(dirPath)
+      const now = Date.now()
+      const ONE_HOUR = 60 * 60 * 1000
+      for (const file of files) {
+        const tempFilePath = path.join(dirPath, file)
+        const stats = fs.statSync(tempFilePath)
+        if (now - stats.mtime.getTime() > ONE_HOUR) {
+          fs.unlinkSync(tempFilePath)
+        }
+      }
+    } catch (cleanupError) {
+      console.error('Error cleaning up old PDFs:', cleanupError)
+    }
+
     const fileUrl = `/temp-pdf/${finalFilename}`
     return NextResponse.json({ url: fileUrl })
   } catch (error: any) {
