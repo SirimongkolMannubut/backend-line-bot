@@ -551,7 +551,7 @@ export default function PdfCreatorPage() {
         const pdfBase64 = window.btoa(binary)
 
         // Upload PDF to server
-        const response = await fetch('/api/upload-pdf', {
+        const response = await fetch('/api/pdf/upload', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
